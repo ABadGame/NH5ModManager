@@ -17,6 +17,7 @@
 
         private void InitializeComponent()
         {
+            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(Form1));
             btnBrowse = new Button();
             txtGamePath = new TextBox();
             btnRefresh = new Button();
@@ -73,45 +74,6 @@
             btnDeploy.UseVisualStyleBackColor = true;
             btnDeploy.Click += btnDeploy_Click;
             // 
-            // lblProfile
-            // 
-            lblProfile.AutoSize = true;
-            lblProfile.Location = new Point(12, 45);
-            lblProfile.Name = "lblProfile";
-            lblProfile.Size = new Size(71, 15);
-            lblProfile.TabIndex = 6;
-            lblProfile.Text = "Mod Profile:";
-            // 
-            // cmbProfiles
-            // 
-            cmbProfiles.DropDownStyle = ComboBoxStyle.DropDownList;
-            cmbProfiles.FormattingEnabled = true;
-            cmbProfiles.Location = new Point(89, 42);
-            cmbProfiles.Name = "cmbProfiles";
-            cmbProfiles.Size = new Size(200, 23);
-            cmbProfiles.TabIndex = 7;
-            // 
-            // btnSaveProfile
-            // 
-            btnSaveProfile.Location = new Point(295, 41);
-            btnSaveProfile.Name = "btnSaveProfile";
-            btnSaveProfile.Size = new Size(95, 25);
-            btnSaveProfile.TabIndex = 8;
-            btnSaveProfile.Text = "+ New Profile";
-            btnSaveProfile.UseVisualStyleBackColor = true;
-            btnSaveProfile.Click += btnSaveProfile_Click;
-            // 
-            // chkUnlockDLC
-            // 
-            chkUnlockDLC.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            chkUnlockDLC.AutoSize = true;
-            chkUnlockDLC.Location = new Point(650, 44);
-            chkUnlockDLC.Name = "chkUnlockDLC";
-            chkUnlockDLC.Size = new Size(138, 19);
-            chkUnlockDLC.TabIndex = 9;
-            chkUnlockDLC.Text = "Auto-Unlock DLCs";
-            chkUnlockDLC.UseVisualStyleBackColor = true;
-            // 
             // lstMods
             // 
             lstMods.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
@@ -143,8 +105,47 @@
             // lblStatus
             // 
             lblStatus.Name = "lblStatus";
-            lblStatus.Size = new Size(109, 17);
+            lblStatus.Size = new Size(108, 17);
             lblStatus.Text = "Status: Initializing...";
+            // 
+            // lblProfile
+            // 
+            lblProfile.AutoSize = true;
+            lblProfile.Location = new Point(12, 45);
+            lblProfile.Name = "lblProfile";
+            lblProfile.Size = new Size(72, 15);
+            lblProfile.TabIndex = 6;
+            lblProfile.Text = "Mod Profile:";
+            // 
+            // cmbProfiles
+            // 
+            cmbProfiles.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbProfiles.FormattingEnabled = true;
+            cmbProfiles.Location = new Point(89, 42);
+            cmbProfiles.Name = "cmbProfiles";
+            cmbProfiles.Size = new Size(200, 23);
+            cmbProfiles.TabIndex = 7;
+            // 
+            // btnSaveProfile
+            // 
+            btnSaveProfile.Location = new Point(295, 41);
+            btnSaveProfile.Name = "btnSaveProfile";
+            btnSaveProfile.Size = new Size(95, 25);
+            btnSaveProfile.TabIndex = 8;
+            btnSaveProfile.Text = "+ New Profile";
+            btnSaveProfile.UseVisualStyleBackColor = true;
+            btnSaveProfile.Click += btnSaveProfile_Click;
+            // 
+            // chkUnlockDLC
+            // 
+            chkUnlockDLC.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            chkUnlockDLC.AutoSize = true;
+            chkUnlockDLC.Location = new Point(664, 44);
+            chkUnlockDLC.Name = "chkUnlockDLC";
+            chkUnlockDLC.Size = new Size(124, 19);
+            chkUnlockDLC.TabIndex = 9;
+            chkUnlockDLC.Text = "Auto-Unlock DLCs";
+            chkUnlockDLC.UseVisualStyleBackColor = true;
             // 
             // Form1
             // 
@@ -162,6 +163,7 @@
             Controls.Add(txtGamePath);
             Controls.Add(btnBrowse);
             Controls.Add(statusStrip1);
+            Icon = (Icon)resources.GetObject("$this.Icon");
             Name = "Form1";
             StartPosition = FormStartPosition.CenterScreen;
             Text = "NASCAR Heat 5 Mod Manager";
