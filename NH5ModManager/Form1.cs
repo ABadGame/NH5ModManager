@@ -27,13 +27,16 @@ namespace NH5ModManager
         public string GameDirectory { get; private set; } = @"C:\Program Files (x86)\Steam\steamapps\common\NASCAR Heat 5";
         private string StagingDirectory => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Mods");
         private string ConfigsDirectory => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Profiles");
+        private string VanillaBackupDirectory => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "NH5ModManager_Data", "Vanilla_Backup");
 
         private FileSystemWatcher? _stagingWatcher;
         private bool _isLoadingProfile = false;
-        private string _previousProfile = "Default";
+        private string _activeProfileName = "Default";
 
         private readonly Dictionary<string, string> _vanillaFileMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly ContextMenuStrip _profileContextMenu = new ContextMenuStrip();
+        private readonly string _cachePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "vanilla_map.json");
+        private readonly string _deployedManifestPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DeployedManifest.json");
 
         public Form1()
         {
@@ -49,27 +52,83 @@ namespace NH5ModManager
             InitializeProfileContextMenu();
         }
 
-        private void Form1_Load(object sender, EventArgs e)
+        private async void Form1_Load(object sender, EventArgs e)
         {
             txtGamePath.Text = GameDirectory;
 
             if (!Directory.Exists(StagingDirectory)) Directory.CreateDirectory(StagingDirectory);
             if (!Directory.Exists(ConfigsDirectory)) Directory.CreateDirectory(ConfigsDirectory);
+            if (!Directory.Exists(VanillaBackupDirectory)) Directory.CreateDirectory(VanillaBackupDirectory);
 
             BuildVanillaFileMap();
             SetupStagingWatcher();
             LoadProfiles();
             LoadInstalledMods();
-            EnsureBepInExInstalledAsync();
+            await EnsureBepInExInstalledAsync();
         }
 
-        private readonly string _cachePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "vanilla_map.json");
+        private string GetGameSaveDataPath()
+        {
+            string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            return Path.Combine(userProfile, "NASCAR Heat 5", "SaveData");
+        }
+
+        private async Task EnsureBepInExInstalledAsync()
+        {
+            string gameDir = txtGamePath.Text.Trim();
+            if (string.IsNullOrWhiteSpace(gameDir) || !Directory.Exists(gameDir)) return;
+
+            string bepinexDll = Path.Combine(gameDir, "winhttp.dll");
+            string bepinexFolder = Path.Combine(gameDir, "BepInEx");
+
+            if (File.Exists(bepinexDll) && Directory.Exists(bepinexFolder)) return;
+
+            DialogResult result = MessageBox.Show(
+                "BepInEx core files were not found in your NASCAR Heat 5 directory.\n\n" +
+                "Would you like to automatically download and install BepInEx v5.4.22 (x64)?",
+                "BepInEx Not Detected",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question
+            );
+
+            if (result != DialogResult.Yes) return;
+
+            string downloadUrl = "https://github.com/BepInEx/BepInEx/releases/download/v5.4.22/BepInEx_x64_5.4.22.0.zip";
+            string tempZipPath = Path.Combine(Path.GetTempPath(), "BepInEx_x64_temp.zip");
+
+            try
+            {
+                lblStatus.Text = "Downloading BepInEx...";
+                btnDeploy.Enabled = false;
+
+                using (HttpClient client = new HttpClient())
+                {
+                    client.DefaultRequestHeaders.UserAgent.ParseAdd("NH5ModManager");
+                    byte[] fileBytes = await client.GetByteArrayAsync(downloadUrl);
+                    await File.WriteAllBytesAsync(tempZipPath, fileBytes);
+                }
+
+                lblStatus.Text = "Extracting BepInEx to game folder...";
+                ZipFile.ExtractToDirectory(tempZipPath, gameDir, overwriteFiles: true);
+
+                MessageBox.Show("BepInEx has been successfully installed to your game directory!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to download or extract BepInEx automatically:\n{ex.Message}", "Installation Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                if (File.Exists(tempZipPath)) File.Delete(tempZipPath);
+                lblStatus.Text = "Ready";
+                btnDeploy.Enabled = true;
+            }
+        }
 
         private void BuildVanillaFileMap()
         {
             _vanillaFileMap.Clear();
 
-            // Use cached map if available to eliminate cold-start scanning delay
             if (File.Exists(_cachePath))
             {
                 try
@@ -82,7 +141,7 @@ namespace NH5ModManager
                         return;
                     }
                 }
-                catch { /* Fallback to fresh scan if cache is corrupt */ }
+                catch { }
             }
 
             string gameDataDir = Path.Combine(GameDirectory, "NASCARHeat5_Data");
@@ -96,18 +155,12 @@ namespace NH5ModManager
                 _vanillaFileMap.TryAdd(fileName, relativePath);
             }
 
-            // Save cache for next run
             try
             {
                 string json = JsonSerializer.Serialize(_vanillaFileMap, new JsonSerializerOptions { WriteIndented = false });
                 File.WriteAllText(_cachePath, json);
             }
             catch { }
-        }
-
-        private string GetDestinationPathForFile(string profileFolder, string relativePath)
-        {
-            return Path.Combine(profileFolder, relativePath);
         }
 
         private void InitializeProfileContextMenu()
@@ -132,10 +185,7 @@ namespace NH5ModManager
             string selectedProfile = cmbProfiles.SelectedItem?.ToString() ?? "Default";
             string profilePath = Path.Combine(ConfigsDirectory, selectedProfile);
 
-            if (!Directory.Exists(profilePath))
-            {
-                Directory.CreateDirectory(profilePath);
-            }
+            if (!Directory.Exists(profilePath)) Directory.CreateDirectory(profilePath);
 
             Process.Start(new ProcessStartInfo
             {
@@ -224,7 +274,6 @@ namespace NH5ModManager
         {
             _isLoadingProfile = true;
             cmbProfiles.Items.Clear();
-
             cmbProfiles.Items.Add("Default");
 
             if (Directory.Exists(ConfigsDirectory))
@@ -232,9 +281,7 @@ namespace NH5ModManager
                 foreach (string dir in Directory.GetDirectories(ConfigsDirectory))
                 {
                     string folderName = Path.GetFileName(dir);
-
-                    if (!folderName.Equals("Vanilla_Backup", StringComparison.OrdinalIgnoreCase) &&
-                        !folderName.Equals("Default", StringComparison.OrdinalIgnoreCase))
+                    if (!folderName.Equals("Default", StringComparison.OrdinalIgnoreCase))
                     {
                         cmbProfiles.Items.Add(folderName);
                     }
@@ -242,7 +289,6 @@ namespace NH5ModManager
             }
 
             cmbProfiles.SelectedIndex = 0;
-            _previousProfile = cmbProfiles.SelectedItem?.ToString() ?? "Default";
             _isLoadingProfile = false;
         }
 
@@ -275,10 +321,7 @@ namespace NH5ModManager
             var activeMods = new List<string>();
             foreach (ListViewItem item in lstMods.Items)
             {
-                if (item.Checked)
-                {
-                    activeMods.Add(item.Text);
-                }
+                if (item.Checked) activeMods.Add(item.Text);
             }
 
             string jsonPath = GetProfileJsonPath(profileName);
@@ -290,28 +333,13 @@ namespace NH5ModManager
             catch { }
         }
 
-        private async void cmbProfiles_SelectedIndexChanged(object? sender, EventArgs e)
+        private void cmbProfiles_SelectedIndexChanged(object? sender, EventArgs e)
         {
             if (_isLoadingProfile) return;
 
-            string newProfile = cmbProfiles.SelectedItem?.ToString() ?? "Default";
-
-            this.UseWaitCursor = true;
-            this.Enabled = false;
-
-            await Task.Run(() =>
-            {
-                SyncCurrentSaveDataToProfile(_previousProfile);
-                SwapSaveDataForProfile(newProfile);
-            });
-
-            _previousProfile = newProfile;
             _isLoadingProfile = true;
             LoadInstalledMods();
             _isLoadingProfile = false;
-
-            this.Enabled = true;
-            this.UseWaitCursor = false;
         }
 
         private void LoadInstalledMods()
@@ -319,8 +347,7 @@ namespace NH5ModManager
             lstMods.ItemCheck -= lstMods_ItemCheck;
             lstMods.Items.Clear();
 
-            if (!Directory.Exists(StagingDirectory))
-                Directory.CreateDirectory(StagingDirectory);
+            if (!Directory.Exists(StagingDirectory)) Directory.CreateDirectory(StagingDirectory);
 
             string selectedProfile = cmbProfiles.SelectedItem?.ToString() ?? "Default";
             HashSet<string> activeForProfile = LoadActiveModsForProfile(selectedProfile);
@@ -339,19 +366,17 @@ namespace NH5ModManager
                 lstMods.Items.Add(item);
             }
 
+            // 2. Scan pending asset files in profile directory
             if (Directory.Exists(profileFolder))
             {
-                // Normalize loose files in the profile root into NASCARHeat5_Data automatically
                 NormalizeModDirectory(profileFolder);
 
-                // 2. Scan pending loose assets or overriding files in target directories
                 string profileDataFolder = Path.Combine(profileFolder, "NASCARHeat5_Data");
                 if (Directory.Exists(profileDataFolder))
                 {
                     string[] profileFiles = Directory.GetFiles(profileDataFolder, "*.*", SearchOption.AllDirectories);
                     foreach (string filePath in profileFiles)
                     {
-                        string fileName = Path.GetFileName(filePath);
                         string relativePath = Path.GetRelativePath(profileFolder, filePath);
                         string ext = Path.GetExtension(filePath).ToLowerInvariant();
 
@@ -363,10 +388,11 @@ namespace NH5ModManager
                             _ => "[Data]"
                         };
 
-                        ListViewItem item = new ListViewItem($"{tagType} {relativePath}")
+                        string itemLabel = $"{tagType} {relativePath}";
+                        ListViewItem item = new ListViewItem(itemLabel)
                         {
                             Tag = filePath,
-                            Checked = true
+                            Checked = activeForProfile.Contains(itemLabel) || (activeForProfile.Count == 0)
                         };
                         lstMods.Items.Add(item);
                     }
@@ -421,71 +447,16 @@ namespace NH5ModManager
             }
 
             string statusText = $"Loaded {activeCount} active, {disabledCount} disabled mod(s).";
-            if (conflictFound)
-            {
-                statusText += " | ⚠️ Conflict Detected: Duplicate Active Mods!";
-            }
-
+            if (conflictFound) statusText += " | ⚠️ Conflict Detected: Duplicate Active Mods!";
             lblStatus.Text = statusText;
         }
 
-        private string GetGameSaveDataPath()
-        {
-            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "NASCAR Heat 5", "SaveData");
-        }
-
-        private void SwapSaveDataForProfile(string profileName)
-        {
-            string activeSaveDir = GetGameSaveDataPath();
-            if (!Directory.Exists(activeSaveDir))
-            {
-                Directory.CreateDirectory(activeSaveDir);
-            }
-
-            string profileSaveDir = Path.Combine(ConfigsDirectory, profileName, "SaveData");
-            string vanillaSaveBackup = Path.Combine(ConfigsDirectory, "Vanilla_Backup", "SaveData");
-
-            if (!Directory.Exists(vanillaSaveBackup))
-            {
-                this.Invoke(new Action(() => lblStatus.Text = "Creating initial SaveData backup..."));
-                CopyDirectory(activeSaveDir, vanillaSaveBackup);
-            }
-
-            try
-            {
-                DirectoryInfo di = new DirectoryInfo(activeSaveDir);
-                foreach (FileInfo file in di.GetFiles()) file.Delete();
-                foreach (DirectoryInfo dir in di.GetDirectories()) dir.Delete(true);
-            }
-            catch { }
-
-            string sourceSaveDir = Directory.Exists(profileSaveDir) ? profileSaveDir : vanillaSaveBackup;
-
-            this.Invoke(new Action(() => lblStatus.Text = $"Loading save data for profile '{profileName}'..."));
-            CopyDirectory(sourceSaveDir, activeSaveDir);
-        }
-
-        private void SyncCurrentSaveDataToProfile(string profileName)
-        {
-            string activeSaveDir = GetGameSaveDataPath();
-            string profileSaveDir = Path.Combine(ConfigsDirectory, profileName, "SaveData");
-
-            if (Directory.Exists(activeSaveDir))
-            {
-                CopyDirectory(activeSaveDir, profileSaveDir);
-            }
-        }
-
-        private readonly string _deployedManifestPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DeployedManifest.json");
-
-        private void SwapDataFolderForProfile(string profileName)
+        private void SwapDataFolderForProfile(string profileName, HashSet<string> enabledAssetPaths)
         {
             string gameDataDir = Path.Combine(GameDirectory, "NASCARHeat5_Data");
-            string profileDataDir = Path.Combine(ConfigsDirectory, profileName, "NASCARHeat5_Data");
-
             if (!Directory.Exists(gameDataDir)) return;
 
-            // 1. Clean up previously deployed mod files using manifest (avoids wiping clean game files)
+            // 1. Revert all previously deployed files from manifest back to vanilla
             if (File.Exists(_deployedManifestPath))
             {
                 try
@@ -495,9 +466,20 @@ namespace NH5ModManager
                     {
                         foreach (string relativeFile in previousManifest)
                         {
+                            // Target file inside GameDirectory (e.g., NASCARHeat5_Data\...)
                             string targetFile = Path.Combine(GameDirectory, relativeFile);
-                            if (File.Exists(targetFile))
+                            string backupFile = Path.Combine(VanillaBackupDirectory, relativeFile);
+
+                            if (File.Exists(backupFile))
                             {
+                                string? destDir = Path.GetDirectoryName(targetFile);
+                                if (!string.IsNullOrEmpty(destDir)) Directory.CreateDirectory(destDir);
+
+                                File.Copy(backupFile, targetFile, overwrite: true);
+                            }
+                            else if (File.Exists(targetFile))
+                            {
+                                // ONLY delete if it was a custom added file that didn't exist in original vanilla
                                 File.Delete(targetFile);
                             }
                         }
@@ -506,61 +488,59 @@ namespace NH5ModManager
                 catch { }
             }
 
-            var deployedFilesList = new List<string>();
+            var newlyDeployedFiles = new List<string>();
+            string profileDataDir = Path.Combine(ConfigsDirectory, profileName, "NASCARHeat5_Data");
 
-            // 2. Deploy active profile overrides and record paths into new manifest
+            // 2. Deploy ONLY actively checked mod files and back up original vanilla versions
             if (profileName != "Default" && Directory.Exists(profileDataDir))
             {
-                this.Invoke(() => lblStatus.Text = $"Applying {profileName} mod files...");
+                this.Invoke(() => lblStatus.Text = $"Applying active mod files for '{profileName}'...");
 
                 foreach (string sourceFile in Directory.GetFiles(profileDataDir, "*.*", SearchOption.AllDirectories))
                 {
+                    if (!enabledAssetPaths.Contains(sourceFile)) continue;
+
                     string relativePath = Path.GetRelativePath(profileDataDir, sourceFile);
+                    string relativeToGame = Path.Combine("NASCARHeat5_Data", relativePath);
                     string destFile = Path.Combine(gameDataDir, relativePath);
+                    string backupFile = Path.Combine(VanillaBackupDirectory, relativeToGame);
+
+                    // If vanilla file exists and isn't backed up yet, back it up now
+                    if (File.Exists(destFile) && !File.Exists(backupFile))
+                    {
+                        string? backupDir = Path.GetDirectoryName(backupFile);
+                        if (!string.IsNullOrEmpty(backupDir)) Directory.CreateDirectory(backupDir);
+                        File.Copy(destFile, backupFile, overwrite: true);
+                    }
 
                     string? destDir = Path.GetDirectoryName(destFile);
                     if (!string.IsNullOrEmpty(destDir)) Directory.CreateDirectory(destDir);
 
                     File.Copy(sourceFile, destFile, overwrite: true);
-
-                    // Track relative path to game directory
-                    deployedFilesList.Add(Path.Combine("NASCARHeat5_Data", relativePath));
+                    newlyDeployedFiles.Add(relativeToGame);
                 }
             }
 
-            // Write manifest
-            File.WriteAllText(_deployedManifestPath, JsonSerializer.Serialize(deployedFilesList));
+            // Save active manifest for future clean reversal
+            File.WriteAllText(_deployedManifestPath, JsonSerializer.Serialize(newlyDeployedFiles));
         }
 
         private string NormalizeModDirectory(string inputPath)
         {
             string targetDataFolder = Path.Combine(inputPath, "NASCARHeat5_Data");
-            if (!Directory.Exists(targetDataFolder))
-            {
-                Directory.CreateDirectory(targetDataFolder);
-            }
+            if (!Directory.Exists(targetDataFolder)) Directory.CreateDirectory(targetDataFolder);
 
-            // 1. Process loose modded files placed directly in the profile folder root
             string[] rootFiles = Directory.GetFiles(inputPath, "*.*", SearchOption.TopDirectoryOnly);
             foreach (string filePath in rootFiles)
             {
                 string fileName = Path.GetFileName(filePath);
-
-                // Check if this single loose file matches a known game file location
                 if (_vanillaFileMap.TryGetValue(fileName, out string? relativePath))
                 {
                     string destinationPath = Path.Combine(inputPath, relativePath);
                     string? destDir = Path.GetDirectoryName(destinationPath);
 
-                    if (!string.IsNullOrEmpty(destDir))
-                    {
-                        Directory.CreateDirectory(destDir);
-                    }
-
-                    if (File.Exists(destinationPath))
-                    {
-                        File.Delete(destinationPath);
-                    }
+                    if (!string.IsNullOrEmpty(destDir)) Directory.CreateDirectory(destDir);
+                    if (File.Exists(destinationPath)) File.Delete(destinationPath);
 
                     File.Move(filePath, destinationPath);
                 }
@@ -584,27 +564,35 @@ namespace NH5ModManager
             this.Enabled = false;
 
             var checkedDlls = new List<string>();
+            var checkedAssetPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
             foreach (ListViewItem item in lstMods.Items)
             {
-                if (item.Checked && (item.Tag?.ToString() == "DLL"))
+                if (item.Checked)
                 {
-                    checkedDlls.Add(item.Text);
+                    if (item.Tag?.ToString() == "DLL")
+                    {
+                        checkedDlls.Add(item.Text);
+                    }
+                    else if (item.Tag != null && File.Exists(item.Tag.ToString()))
+                    {
+                        checkedAssetPaths.Add(item.Tag.ToString()!);
+                    }
                 }
             }
 
             await Task.Run(() =>
             {
-                this.Invoke(new Action(() => lblStatus.Text = $"Syncing save data & deploying season mod for '{selectedProfile}'..."));
-                SwapSaveDataForProfile(selectedProfile);
-                SwapDataFolderForProfile(selectedProfile);
+                // Save data sync removed — using native/unified game save location for all profiles
+
+                this.Invoke(new Action(() => lblStatus.Text = $"Deploying mods for '{selectedProfile}'..."));
+                SwapDataFolderForProfile(selectedProfile, checkedAssetPaths);
 
                 this.Invoke(new Action(() => lblStatus.Text = "Deploying BepInEx plugins..."));
                 string pluginsDir = Path.Combine(GameDirectory, "BepInEx", "plugins");
-                if (!Directory.Exists(pluginsDir))
-                {
-                    Directory.CreateDirectory(pluginsDir);
-                }
+                if (!Directory.Exists(pluginsDir)) Directory.CreateDirectory(pluginsDir);
 
+                // Clear out existing plugins to allow clean uninstallation of unchecked plugins
                 foreach (string file in Directory.GetFiles(pluginsDir, "*.dll"))
                 {
                     try { File.Delete(file); } catch { }
@@ -615,10 +603,7 @@ namespace NH5ModManager
                     string sourcePath = Path.Combine(StagingDirectory, dllName);
                     string destPath = Path.Combine(pluginsDir, dllName);
 
-                    if (File.Exists(sourcePath))
-                    {
-                        File.Copy(sourcePath, destPath, overwrite: true);
-                    }
+                    if (File.Exists(sourcePath)) File.Copy(sourcePath, destPath, overwrite: true);
                 }
             });
 
@@ -626,14 +611,27 @@ namespace NH5ModManager
             this.UseWaitCursor = false;
 
             lblStatus.Text = $"Deployment Complete | Active Profile: {selectedProfile}";
-            MessageBox.Show($"Successfully deployed profile '{selectedProfile}' and active plugins!", "Deployment Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show($"Successfully deployed profile '{selectedProfile}'!", "Deployment Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
             if (MessageBox.Show("Deployment complete! Launch NASCAR Heat 5 now?", "Launch Game", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
             {
                 LaunchNASCARHeat5();
             }
         }
 
-        private async void btnSaveProfile_Click(object? sender, EventArgs e)
+        private void LaunchNASCARHeat5()
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo("steam://rungameid/1265860") { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to launch game: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void btnSaveProfile_Click(object? sender, EventArgs e)
         {
             string newProfile = Microsoft.VisualBasic.Interaction.InputBox("Enter a name for the new Mod Profile:", "Create Profile", "New Profile");
             string cleanProfileName = string.Concat(newProfile.Split(Path.GetInvalidFileNameChars())).Trim();
@@ -642,12 +640,10 @@ namespace NH5ModManager
 
             string targetDir = Path.Combine(ConfigsDirectory, cleanProfileName);
             string targetDataDir = Path.Combine(targetDir, "NASCARHeat5_Data");
+            string targetSaveDir = Path.Combine(targetDir, "SaveData");
 
-            // Simply ensure the folder exists without copying stock game assets into it
-            if (!Directory.Exists(targetDataDir))
-            {
-                Directory.CreateDirectory(targetDataDir);
-            }
+            if (!Directory.Exists(targetDataDir)) Directory.CreateDirectory(targetDataDir);
+            if (!Directory.Exists(targetSaveDir)) Directory.CreateDirectory(targetSaveDir);
 
             LoadProfiles();
             cmbProfiles.SelectedItem = cleanProfileName;
@@ -670,10 +666,7 @@ namespace NH5ModManager
 
             try
             {
-                if (!File.Exists(backupPath))
-                {
-                    File.Copy(dllPath, backupPath);
-                }
+                if (!File.Exists(backupPath)) File.Copy(dllPath, backupPath);
 
                 using (var resolver = new DefaultAssemblyResolver())
                 {
@@ -732,10 +725,7 @@ namespace NH5ModManager
             string currentProfile = cmbProfiles.SelectedItem?.ToString() ?? "Default";
             string profileFolder = Path.Combine(ConfigsDirectory, currentProfile);
 
-            if (!Directory.Exists(profileFolder))
-            {
-                Directory.CreateDirectory(profileFolder);
-            }
+            if (!Directory.Exists(profileFolder)) Directory.CreateDirectory(profileFolder);
 
             this.UseWaitCursor = true;
             this.Enabled = false;
@@ -748,23 +738,17 @@ namespace NH5ModManager
                     {
                         string ext = Path.GetExtension(path).ToLowerInvariant();
 
-                        // 1. Unpack ZIP archives directly into profile
                         if (ext == ".zip")
                         {
-                            try
-                            {
-                                ZipFile.ExtractToDirectory(path, profileFolder, overwriteFiles: true);
-                            }
+                            try { ZipFile.ExtractToDirectory(path, profileFolder, overwriteFiles: true); }
                             catch { }
                         }
-                        // 2. Stage BepInEx plugin DLLs into the Mods folder
                         else if (ext == ".dll" && !path.Contains("Managed", StringComparison.OrdinalIgnoreCase))
                         {
                             string fileName = Path.GetFileName(path);
                             string destPath = Path.Combine(StagingDirectory, fileName);
                             File.Copy(path, destPath, overwrite: true);
                         }
-                        // 3. Import loose individual data/asset files
                         else
                         {
                             string fileName = Path.GetFileName(path);
@@ -779,7 +763,6 @@ namespace NH5ModManager
                     }
                 }
 
-                // Run automatic structure normalization on profile folder
                 NormalizeModDirectory(profileFolder);
             });
 
@@ -798,132 +781,10 @@ namespace NH5ModManager
             {
                 string relativePath = Path.GetRelativePath(sourceDir, file);
                 string destFile = Path.Combine(destinationDir, relativePath);
+                string? destFolder = Path.GetDirectoryName(destFile);
 
-                string? destDir = Path.GetDirectoryName(destFile);
-                if (!string.IsNullOrEmpty(destDir))
-                {
-                    Directory.CreateDirectory(destDir);
-                }
-
+                if (!string.IsNullOrEmpty(destFolder)) Directory.CreateDirectory(destFolder);
                 File.Copy(file, destFile, overwrite: true);
-            }
-        }
-
-        private void btnLaunchGame_Click(object? sender, EventArgs e)
-        {
-            LaunchNASCARHeat5();
-        }
-
-        private void LaunchNASCARHeat5()
-        {
-            try
-            {
-                // 1. Primary method: Launch via Steam protocol (handles achievements, overlays, and DRM cleanly)
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = "steam://rungameid/1265860",
-                    UseShellExecute = true
-                });
-
-                lblStatus.Text = "Status: Launching NASCAR Heat 5 via Steam...";
-            }
-            catch (Exception ex)
-            {
-                // 2. Fallback: Launch direct executable if Steam protocol fails
-                string exePath = Path.Combine(GameDirectory, "NASCARHeat5.exe");
-
-                if (File.Exists(exePath))
-                {
-                    try
-                    {
-                        Process.Start(new ProcessStartInfo
-                        {
-                            FileName = exePath,
-                            WorkingDirectory = GameDirectory,
-                            UseShellExecute = true
-                        });
-
-                        lblStatus.Text = "Status: Launching NASCARHeat5.exe directly...";
-                    }
-                    catch (Exception innerEx)
-                    {
-                        MessageBox.Show($"Failed to launch executable directly:\n{innerEx.Message}", "Launch Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
-                }
-                else
-                {
-                    MessageBox.Show($"Could not launch game:\n{ex.Message}", "Launch Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
-            }
-        }
-
-        private async Task EnsureBepInExInstalledAsync()
-        {
-            string gameDir = txtGamePath.Text;
-            if (string.IsNullOrWhiteSpace(gameDir) || !Directory.Exists(gameDir))
-            {
-                MessageBox.Show("Please select a valid NASCAR Heat 5 installation path first.", "Invalid Game Path", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            string bepinexDll = Path.Combine(gameDir, "winhttp.dll");
-            string bepinexFolder = Path.Combine(gameDir, "BepInEx");
-
-            // Check if BepInEx is already installed
-            if (File.Exists(bepinexDll) && Directory.Exists(bepinexFolder))
-            {
-                return; // BepInEx is already present
-            }
-
-            DialogResult result = MessageBox.Show(
-                "BepInEx core files were not found in your NASCAR Heat 5 directory.\n\n" +
-                "Would you like to automatically download and install BepInEx v5.4.22 (x64)?",
-                "BepInEx Not Detected",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question
-            );
-
-            if (result != DialogResult.Yes) return;
-
-            string downloadUrl = "https://github.com/BepInEx/BepInEx/releases/download/v5.4.22/BepInEx_x64_5.4.22.0.zip";
-            string tempZipPath = Path.Combine(Path.GetTempPath(), "BepInEx_x64_temp.zip");
-
-            try
-            {
-                lblStatus.Text = "Downloading BepInEx...";
-                btnDeploy.Enabled = false;
-
-                using (HttpClient client = new HttpClient())
-                {
-                    // Set User-Agent as required by GitHub API/downloads
-                    client.DefaultRequestHeaders.UserAgent.ParseAdd("NH5ModManager");
-                    byte[] fileBytes = await client.GetByteArrayAsync(downloadUrl);
-                    await File.WriteAllBytesAsync(tempZipPath, fileBytes);
-                }
-
-                lblStatus.Text = "Extracting BepInEx to game folder...";
-
-                // Extract directly into the NASCAR Heat 5 root directory
-                ZipFile.ExtractToDirectory(tempZipPath, gameDir, overwriteFiles: true);
-
-                // Ensure the staging subfolder exists locally for future mod deploys
-                string pluginsStaging = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "NH5ModManager_Data", "BepInEx_Staging", "plugins");
-                Directory.CreateDirectory(pluginsStaging);
-
-                MessageBox.Show("BepInEx has been successfully installed to your game directory!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Failed to download or extract BepInEx automatically:\n{ex.Message}", "Installation Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-            finally
-            {
-                if (File.Exists(tempZipPath))
-                {
-                    File.Delete(tempZipPath);
-                }
-                lblStatus.Text = "Ready";
-                btnDeploy.Enabled = true;
             }
         }
     }
