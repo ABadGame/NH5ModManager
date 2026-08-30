@@ -167,6 +167,16 @@ namespace NH5ModManager
         {
             _profileContextMenu.Items.Clear();
 
+            ToolStripMenuItem enableAllItem = new ToolStripMenuItem("Check All Mods");
+            enableAllItem.Click += (s, e) => SetAllModItemsState(true);
+
+            ToolStripMenuItem disableAllItem = new ToolStripMenuItem("Uncheck All Mods");
+            disableAllItem.Click += (s, e) => SetAllModItemsState(false);
+
+            _profileContextMenu.Items.Add(enableAllItem);
+            _profileContextMenu.Items.Add(disableAllItem);
+            _profileContextMenu.Items.Add(new ToolStripSeparator());
+
             ToolStripMenuItem openFolderItem = new ToolStripMenuItem("Open Profile in File Explorer");
             openFolderItem.Click += (s, e) => OpenSelectedProfileFolder();
 
@@ -178,6 +188,20 @@ namespace NH5ModManager
 
             this.cmbProfiles.ContextMenuStrip = _profileContextMenu;
             this.lstMods.ContextMenuStrip = _profileContextMenu;
+        }
+
+        private void SetAllModItemsState(bool isChecked)
+        {
+            lstMods.BeginUpdate();
+            foreach (ListViewItem item in lstMods.Items)
+            {
+                item.Checked = isChecked;
+            }
+            lstMods.EndUpdate();
+
+            UpdateStatusAndConflicts();
+            string selectedProfile = cmbProfiles.SelectedItem?.ToString() ?? "Default";
+            SaveActiveModsForProfile(selectedProfile);
         }
 
         private void OpenSelectedProfileFolder()
@@ -374,6 +398,10 @@ namespace NH5ModManager
                 string profileDataFolder = Path.Combine(profileFolder, "NASCARHeat5_Data");
                 if (Directory.Exists(profileDataFolder))
                 {
+                    // Check if this profile has an explicit saved JSON state on disk
+                    string jsonPath = GetProfileJsonPath(selectedProfile);
+                    bool hasSavedState = File.Exists(jsonPath);
+
                     string[] profileFiles = Directory.GetFiles(profileDataFolder, "*.*", SearchOption.AllDirectories);
                     foreach (string filePath in profileFiles)
                     {
@@ -392,15 +420,13 @@ namespace NH5ModManager
                         ListViewItem item = new ListViewItem(itemLabel)
                         {
                             Tag = filePath,
-                            Checked = activeForProfile.Contains(itemLabel) || (activeForProfile.Count == 0)
+                            // If saved state exists, respect it. If it's a brand new profile without a JSON file, default ALL to true.
+                            Checked = hasSavedState ? activeForProfile.Contains(itemLabel) : true
                         };
                         lstMods.Items.Add(item);
                     }
                 }
             }
-
-            UpdateStatusAndConflicts();
-            lstMods.ItemCheck += lstMods_ItemCheck;
         }
 
         private void lstMods_ItemCheck(object? sender, ItemCheckEventArgs e)
