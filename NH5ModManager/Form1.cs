@@ -8,6 +8,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using System.Net.Http;
 
 // Disambiguate Mono.Cecil types from System.Reflection
 using AssemblyDefinition = Mono.Cecil.AssemblyDefinition;
@@ -59,6 +60,7 @@ namespace NH5ModManager
             SetupStagingWatcher();
             LoadProfiles();
             LoadInstalledMods();
+            EnsureBepInExInstalledAsync();
         }
 
         private readonly string _cachePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "vanilla_map.json");
@@ -819,7 +821,7 @@ namespace NH5ModManager
                 // 1. Primary method: Launch via Steam protocol (handles achievements, overlays, and DRM cleanly)
                 Process.Start(new ProcessStartInfo
                 {
-                    FileName = "steam://rungameid/1258980",
+                    FileName = "steam://rungameid/1265860",
                     UseShellExecute = true
                 });
 
@@ -852,6 +854,76 @@ namespace NH5ModManager
                 {
                     MessageBox.Show($"Could not launch game:\n{ex.Message}", "Launch Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
+            }
+        }
+
+        private async Task EnsureBepInExInstalledAsync()
+        {
+            string gameDir = txtGamePath.Text;
+            if (string.IsNullOrWhiteSpace(gameDir) || !Directory.Exists(gameDir))
+            {
+                MessageBox.Show("Please select a valid NASCAR Heat 5 installation path first.", "Invalid Game Path", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            string bepinexDll = Path.Combine(gameDir, "winhttp.dll");
+            string bepinexFolder = Path.Combine(gameDir, "BepInEx");
+
+            // Check if BepInEx is already installed
+            if (File.Exists(bepinexDll) && Directory.Exists(bepinexFolder))
+            {
+                return; // BepInEx is already present
+            }
+
+            DialogResult result = MessageBox.Show(
+                "BepInEx core files were not found in your NASCAR Heat 5 directory.\n\n" +
+                "Would you like to automatically download and install BepInEx v5.4.22 (x64)?",
+                "BepInEx Not Detected",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question
+            );
+
+            if (result != DialogResult.Yes) return;
+
+            string downloadUrl = "https://github.com/BepInEx/BepInEx/releases/download/v5.4.22/BepInEx_x64_5.4.22.0.zip";
+            string tempZipPath = Path.Combine(Path.GetTempPath(), "BepInEx_x64_temp.zip");
+
+            try
+            {
+                lblStatus.Text = "Downloading BepInEx...";
+                btnDeploy.Enabled = false;
+
+                using (HttpClient client = new HttpClient())
+                {
+                    // Set User-Agent as required by GitHub API/downloads
+                    client.DefaultRequestHeaders.UserAgent.ParseAdd("NH5ModManager");
+                    byte[] fileBytes = await client.GetByteArrayAsync(downloadUrl);
+                    await File.WriteAllBytesAsync(tempZipPath, fileBytes);
+                }
+
+                lblStatus.Text = "Extracting BepInEx to game folder...";
+
+                // Extract directly into the NASCAR Heat 5 root directory
+                ZipFile.ExtractToDirectory(tempZipPath, gameDir, overwriteFiles: true);
+
+                // Ensure the staging subfolder exists locally for future mod deploys
+                string pluginsStaging = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "NH5ModManager_Data", "BepInEx_Staging", "plugins");
+                Directory.CreateDirectory(pluginsStaging);
+
+                MessageBox.Show("BepInEx has been successfully installed to your game directory!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to download or extract BepInEx automatically:\n{ex.Message}", "Installation Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                if (File.Exists(tempZipPath))
+                {
+                    File.Delete(tempZipPath);
+                }
+                lblStatus.Text = "Ready";
+                btnDeploy.Enabled = true;
             }
         }
     }
