@@ -9,7 +9,6 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
-// Disambiguate Mono.Cecil types from System.Reflection
 using AssemblyDefinition = Mono.Cecil.AssemblyDefinition;
 using ModuleDefinition = Mono.Cecil.ModuleDefinition;
 using TypeDefinition = Mono.Cecil.TypeDefinition;
@@ -586,7 +585,8 @@ namespace NH5ModManager
                         {
                             ILProcessor il = seasonPassMethod.Body.GetILProcessor();
                             seasonPassMethod.Body.Instructions.Clear();
-                            il.Append(il.Create(OpCodes.Ldc_I4_1)); // Force return true
+                            il.Append(il.Create(OpCodes.Ldc_I4_1));
+
                             il.Append(il.Create(OpCodes.Ret));
                         }
 
