@@ -8,7 +8,6 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using System.Net.Http;
 
 // Disambiguate Mono.Cecil types from System.Reflection
 using AssemblyDefinition = Mono.Cecil.AssemblyDefinition;
@@ -25,11 +24,9 @@ namespace NH5ModManager
     public partial class Form1 : Form
     {
         public string GameDirectory { get; private set; } = @"C:\Program Files (x86)\Steam\steamapps\common\NASCAR Heat 5";
-        private string StagingDirectory => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Mods");
         private string ConfigsDirectory => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Profiles");
         private string VanillaBackupDirectory => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "NH5ModManager_Data", "Vanilla_Backup");
 
-        private FileSystemWatcher? _stagingWatcher;
         private bool _isLoadingProfile = false;
         private string _activeProfileName = "Default";
 
@@ -37,6 +34,7 @@ namespace NH5ModManager
         private readonly ContextMenuStrip _profileContextMenu = new ContextMenuStrip();
         private readonly string _cachePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "vanilla_map.json");
         private readonly string _deployedManifestPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DeployedManifest.json");
+        private readonly string _settingsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app_settings.json");
 
         public Form1()
         {
@@ -48,28 +46,60 @@ namespace NH5ModManager
             this.DragDrop += Form1_DragDrop;
             this.lstMods.ItemCheck += lstMods_ItemCheck;
             this.cmbProfiles.SelectedIndexChanged += cmbProfiles_SelectedIndexChanged;
+            this.chkUnlockDLC.CheckedChanged += chkUnlockDLC_CheckedChanged;
 
             InitializeProfileContextMenu();
         }
 
-        private async void Form1_Load(object sender, EventArgs e)
+        private void Form1_Load(object sender, EventArgs e)
         {
             txtGamePath.Text = GameDirectory;
 
-            if (!Directory.Exists(StagingDirectory)) Directory.CreateDirectory(StagingDirectory);
             if (!Directory.Exists(ConfigsDirectory)) Directory.CreateDirectory(ConfigsDirectory);
             if (!Directory.Exists(VanillaBackupDirectory)) Directory.CreateDirectory(VanillaBackupDirectory);
 
+            LoadSettings();
             BuildVanillaFileMap();
-            SetupStagingWatcher();
             LoadProfiles();
             LoadInstalledMods();
         }
 
-        private string GetGameSaveDataPath()
+        private class AppSettings
         {
-            string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            return Path.Combine(userProfile, "NASCAR Heat 5", "SaveData");
+            public bool UnlockDLC { get; set; } = false;
+        }
+
+        private void LoadSettings()
+        {
+            if (File.Exists(_settingsPath))
+            {
+                try
+                {
+                    string json = File.ReadAllText(_settingsPath);
+                    var settings = JsonSerializer.Deserialize<AppSettings>(json);
+                    if (settings != null)
+                    {
+                        chkUnlockDLC.Checked = settings.UnlockDLC;
+                    }
+                }
+                catch { }
+            }
+        }
+
+        private void SaveSettings()
+        {
+            try
+            {
+                var settings = new AppSettings { UnlockDLC = chkUnlockDLC.Checked };
+                string json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(_settingsPath, json);
+            }
+            catch { }
+        }
+
+        private void chkUnlockDLC_CheckedChanged(object? sender, EventArgs e)
+        {
+            SaveSettings();
         }
 
         private void BuildVanillaFileMap()
@@ -194,32 +224,6 @@ namespace NH5ModManager
             }
         }
 
-        private void SetupStagingWatcher()
-        {
-            _stagingWatcher = new FileSystemWatcher(StagingDirectory)
-            {
-                Filter = "*.*",
-                IncludeSubdirectories = true,
-                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.DirectoryName
-            };
-
-            _stagingWatcher.Created += OnStagingFolderChanged;
-            _stagingWatcher.Deleted += OnStagingFolderChanged;
-            _stagingWatcher.Renamed += OnStagingFolderChanged;
-            _stagingWatcher.EnableRaisingEvents = true;
-        }
-
-        private void OnStagingFolderChanged(object sender, FileSystemEventArgs e)
-        {
-            if (this.IsHandleCreated)
-            {
-                this.BeginInvoke(new Action(() =>
-                {
-                    if (!_isLoadingProfile) LoadInstalledMods();
-                }));
-            }
-        }
-
         private void btnBrowse_Click(object? sender, EventArgs e)
         {
             using (FolderBrowserDialog fbd = new FolderBrowserDialog())
@@ -318,13 +322,10 @@ namespace NH5ModManager
             lstMods.ItemCheck -= lstMods_ItemCheck;
             lstMods.Items.Clear();
 
-            if (!Directory.Exists(StagingDirectory)) Directory.CreateDirectory(StagingDirectory);
-
             string selectedProfile = cmbProfiles.SelectedItem?.ToString() ?? "Default";
             HashSet<string> activeForProfile = LoadActiveModsForProfile(selectedProfile);
             string profileFolder = Path.Combine(ConfigsDirectory, selectedProfile);
 
-            // Scan asset overrides in profile directory
             if (Directory.Exists(profileFolder))
             {
                 NormalizeModDirectory(profileFolder);
@@ -417,7 +418,6 @@ namespace NH5ModManager
             string gameDataDir = Path.Combine(GameDirectory, "NASCARHeat5_Data");
             if (!Directory.Exists(gameDataDir)) return;
 
-            // 1. Revert all previously deployed files from manifest back to vanilla
             if (File.Exists(_deployedManifestPath))
             {
                 try
@@ -427,7 +427,6 @@ namespace NH5ModManager
                     {
                         foreach (string relativeFile in previousManifest)
                         {
-                            // Target file inside GameDirectory (e.g., NASCARHeat5_Data\...)
                             string targetFile = Path.Combine(GameDirectory, relativeFile);
                             string backupFile = Path.Combine(VanillaBackupDirectory, relativeFile);
 
@@ -440,7 +439,6 @@ namespace NH5ModManager
                             }
                             else if (File.Exists(targetFile))
                             {
-                                // ONLY delete if it was a custom added file that didn't exist in original vanilla
                                 File.Delete(targetFile);
                             }
                         }
@@ -452,7 +450,6 @@ namespace NH5ModManager
             var newlyDeployedFiles = new List<string>();
             string profileDataDir = Path.Combine(ConfigsDirectory, profileName, "NASCARHeat5_Data");
 
-            // 2. Deploy ONLY actively checked mod files and back up original vanilla versions
             if (profileName != "Default" && Directory.Exists(profileDataDir))
             {
                 this.Invoke(() => lblStatus.Text = $"Applying active mod files for '{profileName}'...");
@@ -466,7 +463,6 @@ namespace NH5ModManager
                     string destFile = Path.Combine(gameDataDir, relativePath);
                     string backupFile = Path.Combine(VanillaBackupDirectory, relativeToGame);
 
-                    // If vanilla file exists and isn't backed up yet, back it up now
                     if (File.Exists(destFile) && !File.Exists(backupFile))
                     {
                         string? backupDir = Path.GetDirectoryName(backupFile);
@@ -482,7 +478,6 @@ namespace NH5ModManager
                 }
             }
 
-            // Save active manifest for future clean reversal
             File.WriteAllText(_deployedManifestPath, JsonSerializer.Serialize(newlyDeployedFiles));
         }
 
@@ -534,10 +529,18 @@ namespace NH5ModManager
                 }
             }
 
+            bool unlockDlcRequested = chkUnlockDLC.Checked;
+
             await Task.Run(() =>
             {
                 this.Invoke(new Action(() => lblStatus.Text = $"Deploying mods for '{selectedProfile}'..."));
                 SwapDataFolderForProfile(selectedProfile, checkedAssetPaths);
+
+                if (unlockDlcRequested)
+                {
+                    this.Invoke(new Action(() => lblStatus.Text = "Applying DLC Pass Patch..."));
+                    ApplyDlcPassPatch();
+                }
             });
 
             this.Enabled = true;
@@ -549,6 +552,54 @@ namespace NH5ModManager
             if (MessageBox.Show("Deployment complete! Launch NASCAR Heat 5 now?", "Launch Game", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
             {
                 LaunchNASCARHeat5();
+            }
+        }
+
+        private void ApplyDlcPassPatch()
+        {
+            string gameDir = GameDirectory.Trim();
+            string managedDir = Path.Combine(gameDir, "NASCARHeat5_Data", "Managed");
+            string dllPath = Path.Combine(managedDir, "Assembly-CSharp.dll");
+            string backupPath = dllPath + ".bak";
+            string tempOutputPath = Path.Combine(managedDir, "Assembly-CSharp.dll.tmp");
+
+            if (!File.Exists(dllPath)) return;
+
+            try
+            {
+                if (!File.Exists(backupPath)) File.Copy(dllPath, backupPath);
+
+                using (var resolver = new DefaultAssemblyResolver())
+                {
+                    resolver.AddSearchDirectory(managedDir);
+                    var readerParameters = new ReaderParameters { AssemblyResolver = resolver, ReadWrite = true };
+
+                    using (AssemblyDefinition assembly = AssemblyDefinition.ReadAssembly(dllPath, readerParameters))
+                    {
+                        ModuleDefinition module = assembly.MainModule;
+                        TypeDefinition? ngUtilType = module.Types.FirstOrDefault(t => t.Namespace == "MGI.Platform.Steam" && t.Name == "SteamPlatformDLCLoader");
+
+                        if (ngUtilType == null) return;
+
+                        MethodDefinition? seasonPassMethod = ngUtilType.Methods.FirstOrDefault(m => m.Name == "do_they_own_the_season_pass");
+                        if (seasonPassMethod != null)
+                        {
+                            ILProcessor il = seasonPassMethod.Body.GetILProcessor();
+                            seasonPassMethod.Body.Instructions.Clear();
+                            il.Append(il.Create(OpCodes.Ldc_I4_1)); // Force return true
+                            il.Append(il.Create(OpCodes.Ret));
+                        }
+
+                        assembly.Write(tempOutputPath);
+                    }
+                }
+
+                File.Move(tempOutputPath, dllPath, overwrite: true);
+            }
+            catch (Exception ex)
+            {
+                if (File.Exists(tempOutputPath)) File.Delete(tempOutputPath);
+                this.Invoke(() => MessageBox.Show($"An error occurred while patching DLC Pass:\n{ex.Message}", "Patch Error", MessageBoxButtons.OK, MessageBoxIcon.Error));
             }
         }
 
@@ -573,73 +624,12 @@ namespace NH5ModManager
 
             string targetDir = Path.Combine(ConfigsDirectory, cleanProfileName);
             string targetDataDir = Path.Combine(targetDir, "NASCARHeat5_Data");
-            string targetSaveDir = Path.Combine(targetDir, "SaveData");
 
             if (!Directory.Exists(targetDataDir)) Directory.CreateDirectory(targetDataDir);
-            if (!Directory.Exists(targetSaveDir)) Directory.CreateDirectory(targetSaveDir);
 
             LoadProfiles();
             cmbProfiles.SelectedItem = cleanProfileName;
             lblStatus.Text = $"Profile '{cleanProfileName}' created successfully.";
-        }
-
-        private void btnUnlockSeasonPass_Click(object? sender, EventArgs e)
-        {
-            string gameDir = txtGamePath.Text.Trim();
-            string managedDir = Path.Combine(gameDir, "NASCARHeat5_Data", "Managed");
-            string dllPath = Path.Combine(managedDir, "Assembly-CSharp.dll");
-            string backupPath = dllPath + ".bak";
-            string tempOutputPath = Path.Combine(managedDir, "Assembly-CSharp.dll.tmp");
-
-            if (!File.Exists(dllPath))
-            {
-                MessageBox.Show("Could not find Assembly-CSharp.dll in the selected directory.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
-
-            try
-            {
-                if (!File.Exists(backupPath)) File.Copy(dllPath, backupPath);
-
-                using (var resolver = new DefaultAssemblyResolver())
-                {
-                    resolver.AddSearchDirectory(managedDir);
-                    var readerParameters = new ReaderParameters { AssemblyResolver = resolver, ReadWrite = true };
-
-                    using (AssemblyDefinition assembly = AssemblyDefinition.ReadAssembly(dllPath, readerParameters))
-                    {
-                        ModuleDefinition module = assembly.MainModule;
-                        TypeDefinition? ngUtilType = module.Types.FirstOrDefault(t => t.Namespace == "MGI.Platform.Steam" && t.Name == "SteamPlatformDLCLoader");
-
-                        if (ngUtilType == null)
-                        {
-                            MessageBox.Show("Could not locate SteamPlatformDLCLoader in Assembly-CSharp.dll.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                            return;
-                        }
-
-                        MethodDefinition? seasonPassMethod = ngUtilType.Methods.FirstOrDefault(m => m.Name == "do_they_own_the_season_pass");
-                        if (seasonPassMethod != null)
-                        {
-                            ILProcessor il = seasonPassMethod.Body.GetILProcessor();
-                            seasonPassMethod.Body.Instructions.Clear();
-                            il.Append(il.Create(OpCodes.Ldc_I4_1)); // Force return true
-                            il.Append(il.Create(OpCodes.Ret));
-                        }
-
-                        assembly.Write(tempOutputPath);
-                    }
-                }
-
-                File.Move(tempOutputPath, dllPath, overwrite: true);
-
-                lblStatus.Text = "Status: Season Pass unlocked!";
-                MessageBox.Show("Season Pass check bypassed successfully!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
-            catch (Exception ex)
-            {
-                if (File.Exists(tempOutputPath)) File.Delete(tempOutputPath);
-                MessageBox.Show($"An error occurred while unlocking Season Pass:\n{ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
         }
 
         private void Form1_DragEnter(object? sender, DragEventArgs e)
@@ -678,7 +668,6 @@ namespace NH5ModManager
                         }
                         else
                         {
-                            // Copy ALL files (including .dlls) directly to the profile directory
                             string fileName = Path.GetFileName(path);
                             string destPath = Path.Combine(profileFolder, fileName);
                             File.Copy(path, destPath, overwrite: true);

@@ -28,7 +28,7 @@
             lblProfile = new Label();
             cmbProfiles = new ComboBox();
             btnSaveProfile = new Button();
-            btnUnlockSeasonPass = new Button();
+            chkUnlockDLC = new CheckBox();
             statusStrip1.SuspendLayout();
             SuspendLayout();
             // 
@@ -101,16 +101,16 @@
             btnSaveProfile.UseVisualStyleBackColor = true;
             btnSaveProfile.Click += btnSaveProfile_Click;
             // 
-            // btnUnlockSeasonPass
+            // chkUnlockDLC
             // 
-            btnUnlockSeasonPass.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            btnUnlockSeasonPass.Location = new Point(648, 41);
-            btnUnlockSeasonPass.Name = "btnUnlockSeasonPass";
-            btnUnlockSeasonPass.Size = new Size(140, 25);
-            btnUnlockSeasonPass.TabIndex = 9;
-            btnUnlockSeasonPass.Text = "Unlock DLC Pass";
-            btnUnlockSeasonPass.UseVisualStyleBackColor = true;
-            btnUnlockSeasonPass.Click += btnUnlockSeasonPass_Click;
+            chkUnlockDLC.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            chkUnlockDLC.AutoSize = true;
+            chkUnlockDLC.Location = new Point(650, 44);
+            chkUnlockDLC.Name = "chkUnlockDLC";
+            chkUnlockDLC.Size = new Size(138, 19);
+            chkUnlockDLC.TabIndex = 9;
+            chkUnlockDLC.Text = "Auto-Unlock DLCs";
+            chkUnlockDLC.UseVisualStyleBackColor = true;
             // 
             // lstMods
             // 
@@ -152,7 +152,7 @@
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(800, 560);
-            Controls.Add(btnUnlockSeasonPass);
+            Controls.Add(chkUnlockDLC);
             Controls.Add(btnSaveProfile);
             Controls.Add(cmbProfiles);
             Controls.Add(lblProfile);
@@ -185,6 +185,6 @@
         private Label lblProfile;
         private ComboBox cmbProfiles;
         private Button btnSaveProfile;
-        private Button btnUnlockSeasonPass;
+        private CheckBox chkUnlockDLC;
     }
 }
