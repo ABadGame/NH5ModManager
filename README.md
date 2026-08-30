@@ -1,4 +1,4 @@
-# NASCAR Heat 5 Mod Manager
+# NASCAR Heat Mod Manager
 
 A lightweight, mod management tool for **NASCAR Heat 5**.
 
