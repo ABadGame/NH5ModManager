@@ -18,7 +18,7 @@ A lightweight, profile-based mod management tool for **NASCAR Heat 5**. Built wi
 ## Installation
 
 1. Download the latest release from the **Releases** tab.
-2. Extract `NH5ModManager.exe` into a folder of your choice (or directly into your NASCAR Heat 5 root directory).
+2. Extract the folder.
 3. Run `NH5ModManager.exe`.
 
 ---
