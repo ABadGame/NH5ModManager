@@ -1,57 +1,57 @@
 # NASCAR Heat 5 Mod Manager
 
-A lightweight, profile-based mod management tool for **NASCAR Heat 5**. Built with C# and WinForms, this utility allows you to organize mod profiles, stage custom game files, bypass DLC checks, and launch the game cleanly via Steam.
+A lightweight, mod management tool for **NASCAR Heat 5**.
 
 ---
 
 ## Features
 
-* **Profile Management:** Create and switch between distinct mod profiles without corrupting your base game files.
-* **Manifest-Based Deployment:** Safely deploys loose asset overrides (`NASCARHeat5_Data`) and tracks installed files to prevent residual mod clutter.
-* **DLC Pass Unlocker:** Integrated `Mono.Cecil` assembly patcher that safely overrides `Assembly-CSharp.dll` to unlock season pass content (includes automatic `.bak` backup creation).
-* **BepInEx Plugin Staging:** Automatically syncs and stages target `.dll` plugins into `BepInEx/plugins`.
-* **Direct Steam Integration:** One-click launch via Steam protocol (`steam://rungameid/1258980`) with executable fallback.
-* **Drag-and-Drop Installation:** Drag loose files directly into the manager for instant staging.
+* **Profile-Based Asset Management:** Create distinct mod profiles for different overhauls, physics tweaks, or custom paint schemes.
+* **Automated DLC Unlocker:** Toggle **Auto-Unlock DLCs** to automatically apply the IL patch to `Assembly-CSharp.dll` every time you deploy mods.
+* **Safe Reversion & Backups:** Automatic original vanilla file backups prevent dirty installs and make reverting to stock effortless.
+* **Drag-and-Drop Support:** Drag `.zip` archives or uncompressed folders directly into the window to assign them to your active profile.
+* **Conflict Detection:** Visual indicators highlight overlapping or duplicated active mod files.
+* **Direct Steam Launching:** Option to launch NASCAR Heat 5 directly through Steam immediately after deployment.
 
 ---
 
 ## Installation
 
 1. Download the latest release from the **Releases** tab.
-2. Extract `NH5ModManager.exe` into a folder of your choice (or directly into your NASCAR Heat 5 root directory).
-3. Run `NH5ModManager.exe`.
+2. Extract the archive to any directory on your system.
+3. Launch `NH5ModManager.exe`.
 
 ---
 
-## Usage
+## Usage Guide
 
-### 1. Setting Up the Game Directory
-Upon first launch, click **Browse** and select your NASCAR Heat 5 installation directory (typically: `C:\Program Files (x86)\Steam\steamapps\common\NASCAR Heat 5`).
-
-### 2. Creating & Managing Profiles
-* Click **+ New Profile** to set up a target mod loadout.
-* Drag loose mod files (e.g., sound banks, modified levels, textures) directly into the installed mods view.
-
-### 3. Unlocking Season Pass Content
-* Click **Unlock DLC Pass** in the top-right toolbar.
-* The manager will back up your original `Assembly-CSharp.dll` to `Assembly-CSharp.dll.bak` and patch the DLC verification check in memory.
-
-### 4. Deploying & Playing
-* Select your desired profile from the drop-down menu.
-* Ensure your target mods are checked in the list view.
-* Click **Deploy Mods** to apply the overrides.
-* Click **Launch Game** to start NASCAR Heat 5 via Steam.
+1. **Set Game Folder:** Click **Browse** and select your root `NASCAR Heat 5` directory (e.g., `C:\Program Files (x86)\Steam\steamapps\common\NASCAR Heat 5`).
+2. **Create / Select Profile:** Choose an existing profile from the dropdown or click **+ New Profile** to set up a new layout.
+3. **Add Mods:** Drag and drop mod archives (`.zip`) or individual mod folders into the app list view to add them to the selected profile.
+4. **Configure DLC Settings:** Check **Auto-Unlock DLCs** if you want the season pass check patched into your deployed assembly files.
+5. **Deploy:** Click **Deploy Mods**. The manager will swap the active assets, run the DLC patch (if enabled), and prompt you to launch the game.
 
 ---
 
-## Troubleshooting & Safety
+## Technical Details & Project Structure
 
-* **Restoring Vanilla Assembly:** If game updates break your patched assembly, navigate to `NASCARHeat5_Data/Managed/`, delete `Assembly-CSharp.dll`, and rename `Assembly-CSharp.dll.bak` back to `Assembly-CSharp.dll`.
-* **Game Running Warning:** Always close NASCAR Heat 5 before deploying mods or switching profiles to avoid file-lock errors.
+```text
+├── Profiles/                      # Saved profile configs and asset structures
+│   ├── Default/
+│   └── <ProfileName>/
+│       └── NASCARHeat5_Data/
+├── NH5ModManager_Data/
+│   └── Vanilla_Backup/            # Original unmodified game backups
+├── app_settings.json              # App configuration (e.g., Auto-Unlock DLC state)
+├── DeployedManifest.json          # Active deployment tracking
+└── vanilla_map.json               # Indexed vanilla directory structure cache
+
+```
 
 ---
 
-## Built With
+## Requirements
 
-* **.NET / C#** - Desktop Application Framework
-* **Mono.Cecil** - IL Assembly Inspection & Modification
+* **OS:** Windows 10 / 11 (64-bit)
+* **Framework:** .NET 8.0 Desktop Runtime
+* **Game:** NASCAR Heat 5 (Steam)
