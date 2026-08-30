@@ -64,65 +64,12 @@ namespace NH5ModManager
             SetupStagingWatcher();
             LoadProfiles();
             LoadInstalledMods();
-            await EnsureBepInExInstalledAsync();
         }
 
         private string GetGameSaveDataPath()
         {
             string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             return Path.Combine(userProfile, "NASCAR Heat 5", "SaveData");
-        }
-
-        private async Task EnsureBepInExInstalledAsync()
-        {
-            string gameDir = txtGamePath.Text.Trim();
-            if (string.IsNullOrWhiteSpace(gameDir) || !Directory.Exists(gameDir)) return;
-
-            string bepinexDll = Path.Combine(gameDir, "winhttp.dll");
-            string bepinexFolder = Path.Combine(gameDir, "BepInEx");
-
-            if (File.Exists(bepinexDll) && Directory.Exists(bepinexFolder)) return;
-
-            DialogResult result = MessageBox.Show(
-                "BepInEx core files were not found in your NASCAR Heat 5 directory.\n\n" +
-                "Would you like to automatically download and install BepInEx v5.4.22 (x64)?",
-                "BepInEx Not Detected",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question
-            );
-
-            if (result != DialogResult.Yes) return;
-
-            string downloadUrl = "https://github.com/BepInEx/BepInEx/releases/download/v5.4.22/BepInEx_x64_5.4.22.0.zip";
-            string tempZipPath = Path.Combine(Path.GetTempPath(), "BepInEx_x64_temp.zip");
-
-            try
-            {
-                lblStatus.Text = "Downloading BepInEx...";
-                btnDeploy.Enabled = false;
-
-                using (HttpClient client = new HttpClient())
-                {
-                    client.DefaultRequestHeaders.UserAgent.ParseAdd("NH5ModManager");
-                    byte[] fileBytes = await client.GetByteArrayAsync(downloadUrl);
-                    await File.WriteAllBytesAsync(tempZipPath, fileBytes);
-                }
-
-                lblStatus.Text = "Extracting BepInEx to game folder...";
-                ZipFile.ExtractToDirectory(tempZipPath, gameDir, overwriteFiles: true);
-
-                MessageBox.Show("BepInEx has been successfully installed to your game directory!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Failed to download or extract BepInEx automatically:\n{ex.Message}", "Installation Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-            finally
-            {
-                if (File.Exists(tempZipPath)) File.Delete(tempZipPath);
-                lblStatus.Text = "Ready";
-                btnDeploy.Enabled = true;
-            }
         }
 
         private void BuildVanillaFileMap()
@@ -377,20 +324,7 @@ namespace NH5ModManager
             HashSet<string> activeForProfile = LoadActiveModsForProfile(selectedProfile);
             string profileFolder = Path.Combine(ConfigsDirectory, selectedProfile);
 
-            // 1. Staged DLL plugins (BepInEx)
-            string[] stagedFiles = Directory.GetFiles(StagingDirectory, "*.dll", SearchOption.AllDirectories);
-            foreach (string file in stagedFiles)
-            {
-                string fileName = Path.GetFileName(file);
-                ListViewItem item = new ListViewItem(fileName)
-                {
-                    Tag = "DLL",
-                    Checked = activeForProfile.Contains(fileName)
-                };
-                lstMods.Items.Add(item);
-            }
-
-            // 2. Scan pending asset files in profile directory
+            // Scan asset overrides in profile directory
             if (Directory.Exists(profileFolder))
             {
                 NormalizeModDirectory(profileFolder);
@@ -398,7 +332,6 @@ namespace NH5ModManager
                 string profileDataFolder = Path.Combine(profileFolder, "NASCARHeat5_Data");
                 if (Directory.Exists(profileDataFolder))
                 {
-                    // Check if this profile has an explicit saved JSON state on disk
                     string jsonPath = GetProfileJsonPath(selectedProfile);
                     bool hasSavedState = File.Exists(jsonPath);
 
@@ -420,13 +353,15 @@ namespace NH5ModManager
                         ListViewItem item = new ListViewItem(itemLabel)
                         {
                             Tag = filePath,
-                            // If saved state exists, respect it. If it's a brand new profile without a JSON file, default ALL to true.
                             Checked = hasSavedState ? activeForProfile.Contains(itemLabel) : true
                         };
                         lstMods.Items.Add(item);
                     }
                 }
             }
+
+            UpdateStatusAndConflicts();
+            lstMods.ItemCheck += lstMods_ItemCheck;
         }
 
         private void lstMods_ItemCheck(object? sender, ItemCheckEventArgs e)
@@ -589,48 +524,20 @@ namespace NH5ModManager
             this.UseWaitCursor = true;
             this.Enabled = false;
 
-            var checkedDlls = new List<string>();
             var checkedAssetPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (ListViewItem item in lstMods.Items)
             {
-                if (item.Checked)
+                if (item.Checked && item.Tag != null && File.Exists(item.Tag.ToString()))
                 {
-                    if (item.Tag?.ToString() == "DLL")
-                    {
-                        checkedDlls.Add(item.Text);
-                    }
-                    else if (item.Tag != null && File.Exists(item.Tag.ToString()))
-                    {
-                        checkedAssetPaths.Add(item.Tag.ToString()!);
-                    }
+                    checkedAssetPaths.Add(item.Tag.ToString()!);
                 }
             }
 
             await Task.Run(() =>
             {
-                // Save data sync removed — using native/unified game save location for all profiles
-
                 this.Invoke(new Action(() => lblStatus.Text = $"Deploying mods for '{selectedProfile}'..."));
                 SwapDataFolderForProfile(selectedProfile, checkedAssetPaths);
-
-                this.Invoke(new Action(() => lblStatus.Text = "Deploying BepInEx plugins..."));
-                string pluginsDir = Path.Combine(GameDirectory, "BepInEx", "plugins");
-                if (!Directory.Exists(pluginsDir)) Directory.CreateDirectory(pluginsDir);
-
-                // Clear out existing plugins to allow clean uninstallation of unchecked plugins
-                foreach (string file in Directory.GetFiles(pluginsDir, "*.dll"))
-                {
-                    try { File.Delete(file); } catch { }
-                }
-
-                foreach (string dllName in checkedDlls)
-                {
-                    string sourcePath = Path.Combine(StagingDirectory, dllName);
-                    string destPath = Path.Combine(pluginsDir, dllName);
-
-                    if (File.Exists(sourcePath)) File.Copy(sourcePath, destPath, overwrite: true);
-                }
             });
 
             this.Enabled = true;
@@ -769,14 +676,9 @@ namespace NH5ModManager
                             try { ZipFile.ExtractToDirectory(path, profileFolder, overwriteFiles: true); }
                             catch { }
                         }
-                        else if (ext == ".dll" && !path.Contains("Managed", StringComparison.OrdinalIgnoreCase))
-                        {
-                            string fileName = Path.GetFileName(path);
-                            string destPath = Path.Combine(StagingDirectory, fileName);
-                            File.Copy(path, destPath, overwrite: true);
-                        }
                         else
                         {
+                            // Copy ALL files (including .dlls) directly to the profile directory
                             string fileName = Path.GetFileName(path);
                             string destPath = Path.Combine(profileFolder, fileName);
                             File.Copy(path, destPath, overwrite: true);
