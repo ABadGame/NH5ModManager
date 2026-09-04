@@ -29,7 +29,10 @@
             lblProfile = new Label();
             cmbProfiles = new ComboBox();
             btnSaveProfile = new Button();
+            btnExportProfile = new Button();
+            btnImportProfile = new Button();
             chkUnlockDLC = new CheckBox();
+            chkCustomServer = new CheckBox();
             statusStrip1.SuspendLayout();
             SuspendLayout();
             // 
@@ -123,18 +126,38 @@
             cmbProfiles.FormattingEnabled = true;
             cmbProfiles.Location = new Point(89, 42);
             cmbProfiles.Name = "cmbProfiles";
-            cmbProfiles.Size = new Size(200, 23);
+            cmbProfiles.Size = new Size(180, 23);
             cmbProfiles.TabIndex = 7;
             // 
             // btnSaveProfile
             // 
-            btnSaveProfile.Location = new Point(295, 41);
+            btnSaveProfile.Location = new Point(275, 41);
             btnSaveProfile.Name = "btnSaveProfile";
-            btnSaveProfile.Size = new Size(95, 25);
+            btnSaveProfile.Size = new Size(57, 25);
             btnSaveProfile.TabIndex = 8;
             btnSaveProfile.Text = "+ New Profile";
             btnSaveProfile.UseVisualStyleBackColor = true;
             btnSaveProfile.Click += btnSaveProfile_Click;
+            // 
+            // btnExportProfile
+            // 
+            btnExportProfile.Location = new Point(334, 41);
+            btnExportProfile.Name = "btnExportProfile";
+            btnExportProfile.Size = new Size(60, 25);
+            btnExportProfile.TabIndex = 11;
+            btnExportProfile.Text = "Export";
+            btnExportProfile.UseVisualStyleBackColor = true;
+            btnExportProfile.Click += btnExportProfile_Click;
+            // 
+            // btnImportProfile
+            // 
+            btnImportProfile.Location = new Point(394, 41);
+            btnImportProfile.Name = "btnImportProfile";
+            btnImportProfile.Size = new Size(60, 25);
+            btnImportProfile.TabIndex = 12;
+            btnImportProfile.Text = "Import";
+            btnImportProfile.UseVisualStyleBackColor = true;
+            btnImportProfile.Click += btnImportProfile_Click;
             // 
             // chkUnlockDLC
             // 
@@ -147,12 +170,26 @@
             chkUnlockDLC.Text = "Auto-Unlock DLCs";
             chkUnlockDLC.UseVisualStyleBackColor = true;
             // 
+            // chkCustomServer
+            // 
+            chkCustomServer.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            chkCustomServer.AutoSize = true;
+            chkCustomServer.Location = new Point(531, 44);
+            chkCustomServer.Name = "chkCustomServer";
+            chkCustomServer.Size = new Size(124, 19);
+            chkCustomServer.TabIndex = 10;
+            chkCustomServer.Text = "Enable Multiplayer";
+            chkCustomServer.UseVisualStyleBackColor = true;
+            // 
             // Form1
             // 
             AllowDrop = true;
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(800, 560);
+            Controls.Add(btnImportProfile);
+            Controls.Add(btnExportProfile);
+            Controls.Add(chkCustomServer);
             Controls.Add(chkUnlockDLC);
             Controls.Add(btnSaveProfile);
             Controls.Add(cmbProfiles);
@@ -187,6 +224,9 @@
         private Label lblProfile;
         private ComboBox cmbProfiles;
         private Button btnSaveProfile;
+        private Button btnExportProfile;
+        private Button btnImportProfile;
         private CheckBox chkUnlockDLC;
+        private CheckBox chkCustomServer;
     }
 }
