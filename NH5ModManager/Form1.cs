@@ -989,8 +989,29 @@ namespace NH5ModManager
 
                         if (ext == ".zip")
                         {
-                            try { ZipFile.ExtractToDirectory(path, profileFolder, overwriteFiles: true); }
-                            catch { }
+                            // Unpack ZIP into temporary directory first
+                            string tempExtractDir = Path.Combine(Path.GetTempPath(), $"nh5_zip_{Guid.NewGuid()}");
+                            try
+                            {
+                                ZipFile.ExtractToDirectory(path, tempExtractDir);
+
+                                // Pull every file out of the extracted ZIP and flatten to profile folder
+                                foreach (string file in Directory.GetFiles(tempExtractDir, "*.*", SearchOption.AllDirectories))
+                                {
+                                    string fileName = Path.GetFileName(file);
+                                    string destPath = Path.Combine(profileFolder, fileName);
+                                    File.Copy(file, destPath, overwrite: true);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                this.Invoke(() => MessageBox.Show($"Failed to extract ZIP '{Path.GetFileName(path)}':\n{ex.Message}", "ZIP Extraction Error", MessageBoxButtons.OK, MessageBoxIcon.Error));
+                            }
+                            finally
+                            {
+                                if (Directory.Exists(tempExtractDir))
+                                    Directory.Delete(tempExtractDir, true);
+                            }
                         }
                         else
                         {
@@ -1001,11 +1022,19 @@ namespace NH5ModManager
                     }
                     else if (Directory.Exists(path))
                     {
-                        string destFolder = Path.Combine(profileFolder, Path.GetFileName(path));
-                        CopyDirectory(path, destFolder);
+                        // Grab EVERY file inside the dropped folder (and subfolders)
+                        string[] filesInsideFolder = Directory.GetFiles(path, "*.*", SearchOption.AllDirectories);
+
+                        foreach (string file in filesInsideFolder)
+                        {
+                            string fileName = Path.GetFileName(file);
+                            string destPath = Path.Combine(profileFolder, fileName);
+                            File.Copy(file, destPath, overwrite: true);
+                        }
                     }
                 }
 
+                // Auto-sort all flattened files into NASCARHeat5_Data based on the Vanilla Map
                 NormalizeModDirectory(profileFolder);
             });
 
