@@ -8,15 +8,16 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-
+using Mono.Cecil;
+using Mono.Cecil.Cil;
 using AssemblyDefinition = Mono.Cecil.AssemblyDefinition;
-using ModuleDefinition = Mono.Cecil.ModuleDefinition;
-using TypeDefinition = Mono.Cecil.TypeDefinition;
-using MethodDefinition = Mono.Cecil.MethodDefinition;
 using DefaultAssemblyResolver = Mono.Cecil.DefaultAssemblyResolver;
-using ReaderParameters = Mono.Cecil.ReaderParameters;
 using ILProcessor = Mono.Cecil.Cil.ILProcessor;
+using MethodDefinition = Mono.Cecil.MethodDefinition;
+using ModuleDefinition = Mono.Cecil.ModuleDefinition;
 using OpCodes = Mono.Cecil.Cil.OpCodes;
+using ReaderParameters = Mono.Cecil.ReaderParameters;
+using TypeDefinition = Mono.Cecil.TypeDefinition;
 
 namespace NH5ModManager
 {
@@ -37,6 +38,12 @@ namespace NH5ModManager
         private readonly string _cachePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "vanilla_map.json");
         private readonly string _deployedManifestPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DeployedManifest.json");
         private readonly string _settingsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app_settings.json");
+        [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+        private static extern bool ChangeWindowMessageFilterEx(IntPtr hWnd, uint msg, uint action, IntPtr pObserved);
+        private const uint WM_DROPFILES = 0x0233;
+        private const uint WM_COPYDATA = 0x004A;
+        private const uint MSGFLT_ALLOW = 1;
+
 
         public Form1()
         {
@@ -44,8 +51,16 @@ namespace NH5ModManager
 
             this.lstMods.UseCompatibleStateImageBehavior = false;
             this.AllowDrop = true;
+            this.lstMods.AllowDrop = true;
+
+            // Wire DragEnter, DragOver, and DragDrop to both the Form and ListView
+            this.lstMods.DragEnter += Form1_DragEnter;
+            this.lstMods.DragOver += Form1_DragOver;
+            this.lstMods.DragDrop += Form1_DragDrop;
             this.DragEnter += Form1_DragEnter;
+            this.DragOver += Form1_DragOver;
             this.DragDrop += Form1_DragDrop;
+
             this.lstMods.ItemCheck += lstMods_ItemCheck;
             this.cmbProfiles.SelectedIndexChanged += cmbProfiles_SelectedIndexChanged;
             this.chkUnlockDLC.CheckedChanged += chkSettings_CheckedChanged;
@@ -835,6 +850,12 @@ namespace NH5ModManager
 
                 if (deploymentSuccess)
                 {
+                    if (unlockDlcRequested)
+                    {
+                        this.Invoke(new Action(() => lblStatus.Text = "Deploying Ozzycon DLC Fix assets to DLC folder..."));
+                        DeployDlcFixFiles();
+                    }
+
                     if (unlockDlcRequested || customServerRequested)
                     {
                         this.Invoke(new Action(() => lblStatus.Text = "Mods verified. Applying Assembly Patches (DLC/Server)..."));
@@ -867,66 +888,155 @@ namespace NH5ModManager
             string gameDir = GameDirectory.Trim();
             string managedDir = Path.Combine(gameDir, "NASCARHeat5_Data", "Managed");
             string dllPath = Path.Combine(managedDir, "Assembly-CSharp.dll");
-            string backupPath = dllPath + ".bak";
-            string tempOutputPath = Path.Combine(managedDir, "Assembly-CSharp.dll.tmp");
+            string backupPath = dllPath + ".nh5final-backup";
+            string tempOutputPath = dllPath + ".tmp-seturl";
 
             if (!File.Exists(dllPath)) return;
 
             try
             {
-                if (!File.Exists(backupPath)) File.Copy(dllPath, backupPath, overwrite: true);
-
-                byte[] assemblyBytes = File.ReadAllBytes(dllPath);
-
-                using (var resolver = new DefaultAssemblyResolver())
+                // 1. Create clean baseline backup if absent
+                if (!File.Exists(backupPath))
                 {
-                    resolver.AddSearchDirectory(managedDir);
-                    var readerParameters = new ReaderParameters { AssemblyResolver = resolver };
-
-                    using (MemoryStream ms = new MemoryStream(assemblyBytes))
-                    using (AssemblyDefinition assembly = AssemblyDefinition.ReadAssembly(ms, readerParameters))
-                    {
-                        ModuleDefinition module = assembly.MainModule;
-
-                        if (enableDlc)
-                        {
-                            TypeDefinition? dlcType = module.Types.FirstOrDefault(t => t.Namespace == "MGI.Platform.Steam" && t.Name == "SteamPlatformDLCLoader");
-                            MethodDefinition? seasonPassMethod = dlcType?.Methods.FirstOrDefault(m => m.Name == "do_they_own_the_season_pass");
-
-                            if (seasonPassMethod != null)
-                            {
-                                ILProcessor il = seasonPassMethod.Body.GetILProcessor();
-                                seasonPassMethod.Body.Instructions.Clear();
-                                il.Append(il.Create(OpCodes.Ldc_I4_1));
-                                il.Append(il.Create(OpCodes.Ret));
-                            }
-                        }
-
-                        if (enableCustomServer)
-                        {
-                            TypeDefinition? ngUtilType = module.Types.FirstOrDefault(t => t.Namespace == "MGI.NG" && t.Name == "NGUtil");
-                            MethodDefinition? getBaseUrlMethod = ngUtilType?.Methods.FirstOrDefault(m => m.Name == "GetBaseURL");
-
-                            if (getBaseUrlMethod != null)
-                            {
-                                ILProcessor il = getBaseUrlMethod.Body.GetILProcessor();
-                                getBaseUrlMethod.Body.Instructions.Clear();
-                                il.Append(il.Create(OpCodes.Ldstr, CustomServerUrl));
-                                il.Append(il.Create(OpCodes.Ret));
-                            }
-                        }
-
-                        assembly.Write(tempOutputPath);
-                    }
+                    File.Copy(dllPath, backupPath, overwrite: true);
                 }
 
-                File.Move(tempOutputPath, dllPath, overwrite: true);
+                var resolver = new DefaultAssemblyResolver();
+                resolver.AddSearchDirectory(managedDir);
+                var readerParameters = new ReaderParameters { AssemblyResolver = resolver };
+
+                using (AssemblyDefinition asm = AssemblyDefinition.ReadAssembly(dllPath, readerParameters))
+                {
+                    ModuleDefinition module = asm.MainModule;
+
+                    // --- Patch 1: Unlock DLC ---
+                    if (enableDlc)
+                    {
+                        TypeDefinition? dlcType = module.Types.FirstOrDefault(t => t.Name == "SteamPlatformDLCLoader");
+                        MethodDefinition? seasonPassMethod = dlcType?.Methods.FirstOrDefault(m => m.Name == "do_they_own_the_season_pass");
+
+                        if (seasonPassMethod != null)
+                        {
+                            ILProcessor il = seasonPassMethod.Body.GetILProcessor();
+                            seasonPassMethod.Body.Instructions.Clear();
+                            il.Append(il.Create(OpCodes.Ldc_I4_1));
+                            il.Append(il.Create(OpCodes.Ret));
+                        }
+                    }
+
+                    // --- Patch 2: Conditional Custom Server URL ---
+                    if (enableCustomServer)
+                    {
+                        TypeDefinition? ngUtilType = module.Types.FirstOrDefault(t => t.Name == "NGUtil");
+                        MethodDefinition? getBaseUrlMethod = ngUtilType?.Methods.FirstOrDefault(m => m.Name == "GetBaseURL" && m.Parameters.Count == 0 && m.HasBody);
+
+                        if (getBaseUrlMethod != null)
+                        {
+                            // Check if stock URLs exist in the current body
+                            bool hasStockUrls = getBaseUrlMethod.Body.Instructions.Any(i =>
+                                i.OpCode == OpCodes.Ldstr &&
+                                (string.Equals(i.Operand as string, "https://n2020.mgrsys.com/", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(i.Operand as string, "https://n2022.mgrsys.com/", StringComparison.OrdinalIgnoreCase)));
+
+                            if (hasStockUrls)
+                            {
+                                // Path A: In-place string replacement (Safe for existing mods)
+                                foreach (var inst in getBaseUrlMethod.Body.Instructions)
+                                {
+                                    if (inst.OpCode == OpCodes.Ldstr && inst.Operand is string str)
+                                    {
+                                        if (string.Equals(str, "https://n2020.mgrsys.com/", StringComparison.OrdinalIgnoreCase))
+                                            inst.Operand = "http://72.39.41.141:8000/n2020/";
+                                        else if (string.Equals(str, "https://n2022.mgrsys.com/", StringComparison.OrdinalIgnoreCase))
+                                            inst.Operand = "http://72.39.41.141:8000/n2022/";
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                // Path B: Scan existing assembly for pre-resolved method references
+                                MethodReference? globalMethod = FindMethodRef(module, mr => mr.Name == "Global" && mr.DeclaringType.Name == "InputSys");
+                                MethodReference? debugGetKeyMethod = FindMethodRef(module, mr => mr.Name == "Debug_GetKeyDown");
+                                MethodReference? getInstanceMethod = FindMethodRef(module, mr => mr.Name == "get_Instance" && mr.DeclaringType.FullName.Contains("LazySingleton") && mr.DeclaringType.FullName.Contains("GameYearManager"));
+                                MethodReference? isFutureYearMethod = FindMethodRef(module, mr => mr.Name == "IsFutureYearActive" && mr.DeclaringType.Name == "GameYearManager");
+
+                                if (globalMethod != null && debugGetKeyMethod != null && getInstanceMethod != null && isFutureYearMethod != null)
+                                {
+                                    getBaseUrlMethod.Body.ExceptionHandlers.Clear();
+                                    getBaseUrlMethod.Body.Variables.Clear();
+                                    getBaseUrlMethod.Body.Instructions.Clear();
+                                    getBaseUrlMethod.Body.InitLocals = false;
+                                    getBaseUrlMethod.Body.MaxStackSize = 8;
+
+                                    ILProcessor il = getBaseUrlMethod.Body.GetILProcessor();
+
+                                    Instruction targetGetInstance = il.Create(OpCodes.Call, getInstanceMethod);
+                                    Instruction targetN2020 = il.Create(OpCodes.Ldstr, "http://72.39.41.141:8000/n2020/");
+                                    Instruction targetRet = il.Create(OpCodes.Ret);
+
+                                    // 1. if (InputSys.Global().Debug_GetKeyDown((MGIKeyCode)42)) [42 = LEFT_SHIFT]
+                                    il.Emit(OpCodes.Call, globalMethod);
+                                    il.Emit(OpCodes.Ldc_I4_S, (sbyte)42);
+                                    il.Emit(OpCodes.Callvirt, debugGetKeyMethod);
+                                    il.Emit(OpCodes.Brfalse, targetGetInstance);
+
+                                    // 2. return debug URL
+                                    il.Emit(OpCodes.Ldstr, "http://192.168.1.132:8000/");
+                                    il.Emit(OpCodes.Ret);
+
+                                    // 3. LazySingleton<GameYearManager>.Instance.IsFutureYearActive()
+                                    il.Append(targetGetInstance);
+                                    il.Emit(OpCodes.Callvirt, isFutureYearMethod);
+                                    il.Emit(OpCodes.Brfalse, targetN2020);
+
+                                    // 4. Return n2022 URL
+                                    il.Emit(OpCodes.Ldstr, "http://72.39.41.141:8000/n2022/");
+                                    il.Emit(OpCodes.Br, targetRet);
+
+                                    // 5. Return n2020 URL
+                                    il.Append(targetN2020);
+                                    il.Append(targetRet);
+                                }
+                            }
+                        }
+                    }
+
+                    asm.Write(tempOutputPath);
+                }
+
+                if (File.Exists(tempOutputPath))
+                {
+                    File.Copy(tempOutputPath, dllPath, overwrite: true);
+                    File.Delete(tempOutputPath);
+                }
             }
             catch (Exception ex)
             {
                 if (File.Exists(tempOutputPath)) File.Delete(tempOutputPath);
                 this.Invoke(() => MessageBox.Show($"An error occurred while patching Assembly-CSharp.dll:\n{ex.Message}", "Patch Error", MessageBoxButtons.OK, MessageBoxIcon.Error));
             }
+        }
+
+        // Helper method to locate existing MethodReferences anywhere in the assembly
+        private MethodReference? FindMethodRef(ModuleDefinition module, Func<MethodReference, bool> match)
+        {
+            foreach (TypeDefinition type in module.Types)
+            {
+                foreach (MethodDefinition method in type.Methods)
+                {
+                    if (method.HasBody)
+                    {
+                        foreach (Instruction inst in method.Body.Instructions)
+                        {
+                            if (inst.Operand is MethodReference mr && match(mr))
+                            {
+                                return mr;
+                            }
+                        }
+                    }
+                }
+            }
+            return null;
         }
 
         private void LaunchNASCARHeat5()
@@ -966,10 +1076,18 @@ namespace NH5ModManager
                 e.Effect = DragDropEffects.None;
         }
 
+        private void Form1_DragOver(object? sender, DragEventArgs e)
+        {
+            if (e.Data?.GetDataPresent(DataFormats.FileDrop) == true)
+                e.Effect = DragDropEffects.Copy;
+            else
+                e.Effect = DragDropEffects.None;
+        }
+
         private async void Form1_DragDrop(object? sender, DragEventArgs e)
         {
             string[]? paths = e.Data?.GetData(DataFormats.FileDrop) as string[];
-            if (paths == null) return;
+            if (paths == null || paths.Length == 0) return;
 
             string currentProfile = cmbProfiles.SelectedItem?.ToString() ?? "Default";
             string profileFolder = Path.Combine(ConfigsDirectory, currentProfile);
@@ -989,13 +1107,11 @@ namespace NH5ModManager
 
                         if (ext == ".zip")
                         {
-                            // Unpack ZIP into temporary directory first
                             string tempExtractDir = Path.Combine(Path.GetTempPath(), $"nh5_zip_{Guid.NewGuid()}");
                             try
                             {
                                 ZipFile.ExtractToDirectory(path, tempExtractDir);
 
-                                // Pull every file out of the extracted ZIP and flatten to profile folder
                                 foreach (string file in Directory.GetFiles(tempExtractDir, "*.*", SearchOption.AllDirectories))
                                 {
                                     string fileName = Path.GetFileName(file);
@@ -1022,7 +1138,6 @@ namespace NH5ModManager
                     }
                     else if (Directory.Exists(path))
                     {
-                        // Grab EVERY file inside the dropped folder (and subfolders)
                         string[] filesInsideFolder = Directory.GetFiles(path, "*.*", SearchOption.AllDirectories);
 
                         foreach (string file in filesInsideFolder)
@@ -1034,15 +1149,17 @@ namespace NH5ModManager
                     }
                 }
 
-                // Auto-sort all flattened files into NASCARHeat5_Data based on the Vanilla Map
                 NormalizeModDirectory(profileFolder);
             });
 
             this.Enabled = true;
             this.UseWaitCursor = false;
 
-            LoadInstalledMods();
-            lblStatus.Text = $"Import complete for profile: '{currentProfile}'";
+            this.Invoke(new Action(() =>
+            {
+                LoadInstalledMods();
+                lblStatus.Text = $"Import complete for profile: '{currentProfile}'";
+            }));
         }
 
         private static void CopyDirectory(string sourceDir, string destinationDir)
@@ -1068,6 +1185,33 @@ namespace NH5ModManager
         private void btnImportProfile_Click(object? sender, EventArgs e)
         {
             ImportProfilePackage();
+        }
+
+        private void DeployDlcFixFiles()
+        {
+            string sourceFixDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DLC_Fix");
+            if (!Directory.Exists(sourceFixDir)) return;
+
+            string targetDlcDir = Path.Combine(GameDirectory, "DLC");
+            if (!Directory.Exists(targetDlcDir)) Directory.CreateDirectory(targetDlcDir);
+
+            foreach (string sourceFile in Directory.GetFiles(sourceFixDir, "*.*", SearchOption.TopDirectoryOnly))
+            {
+                string fileName = Path.GetFileName(sourceFile);
+                string destFile = Path.Combine(targetDlcDir, fileName);
+                string relativeToGame = Path.Combine("DLC", fileName);
+                string backupFile = Path.Combine(VanillaBackupDirectory, relativeToGame);
+
+                // Backup existing vanilla/current file if not already backed up
+                if (File.Exists(destFile) && !File.Exists(backupFile))
+                {
+                    string? backupDir = Path.GetDirectoryName(backupFile);
+                    if (!string.IsNullOrEmpty(backupDir)) Directory.CreateDirectory(backupDir);
+                    File.Copy(destFile, backupFile, overwrite: true);
+                }
+
+                File.Copy(sourceFile, destFile, overwrite: true);
+            }
         }
     }
 }
