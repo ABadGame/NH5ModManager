@@ -17,9 +17,13 @@ A lightweight, mod management tool for **NASCAR Heat 5**.
 
 ## Installation
 
+NOTE: Please make sure your current game files are in a CLEAN unmodified state otherwise, disabling of mods will not work correctly.
+
 1. Download the latest release from the **Releases** tab.
 2. Extract the archive to any directory on your system.
 3. Launch `NH5ModManager.exe`.
+
+For any issues, please visit our [Discord server](https://discord.gg/3KQ49uEVj2)
 
 ---
 
