@@ -29,6 +29,42 @@ namespace NH5ModManager
         private string ConfigsDirectory => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Profiles");
         private string VanillaBackupDirectory => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "NH5ModManager_Data", "Vanilla_Backup");
 
+        private string _saveDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "NASCAR Heat 5");
+        private bool _isLoadingSettings;
+        private SaveProfileManager SaveProfiles => new SaveProfileManager(_saveDirectory, ConfigsDirectory);
+
+        private static void EnsureGameClosed()
+        {
+            foreach (var process in Process.GetProcesses())
+            {
+                using (process)
+                {
+                    if (process.ProcessName.Contains("NASCARHeat5", StringComparison.OrdinalIgnoreCase)
+                        || process.ProcessName.Contains("NASCAR Heat 5", StringComparison.OrdinalIgnoreCase))
+                        throw new IOException("Close NASCAR Heat 5 before deploying mods or switching saves.");
+                }
+            }
+        }
+
+        private void ChooseSaveFolder()
+        {
+            using var dialog = new FolderBrowserDialog
+            {
+                Description = @"Select the SAVE folder (normally C:\Users\<your user>\NASCAR Heat 5), not the Steam game installation.",
+                SelectedPath = _saveDirectory,
+                UseDescriptionForTitle = true
+            };
+            if (dialog.ShowDialog() != DialogResult.OK) return;
+            if (Directory.Exists(Path.Combine(dialog.SelectedPath, "NASCARHeat5_Data")))
+            {
+                MessageBox.Show("Select the game's save folder, not its installation folder.", "Save Folder", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            _saveDirectory = dialog.SelectedPath;
+            SaveSettings();
+            lblStatus.Text = $"Save folder: {_saveDirectory}";
+        }
+
         private bool _isLoadingProfile = false;
         private string _activeProfileName = "Default";
 
@@ -84,12 +120,14 @@ namespace NH5ModManager
 
         private class AppSettings
         {
+            public string? SaveDirectory { get; set; }
             public bool UnlockDLC { get; set; } = false;
             public bool EnableCustomServer { get; set; } = false;
         }
 
         private void LoadSettings()
         {
+            _isLoadingSettings = true;
             if (File.Exists(_settingsPath))
             {
                 try
@@ -98,20 +136,24 @@ namespace NH5ModManager
                     var settings = JsonSerializer.Deserialize<AppSettings>(json);
                     if (settings != null)
                     {
+                        if (!string.IsNullOrWhiteSpace(settings.SaveDirectory)) _saveDirectory = settings.SaveDirectory;
                         chkUnlockDLC.Checked = settings.UnlockDLC;
                         chkCustomServer.Checked = settings.EnableCustomServer;
                     }
                 }
                 catch { }
             }
+            _isLoadingSettings = false;
         }
 
         private void SaveSettings()
         {
+            if (_isLoadingSettings) return;
             try
             {
                 var settings = new AppSettings
                 {
+                    SaveDirectory = _saveDirectory,
                     UnlockDLC = chkUnlockDLC.Checked,
                     EnableCustomServer = chkCustomServer.Checked
                 };
@@ -191,6 +233,8 @@ namespace NH5ModManager
             _profileContextMenu.Items.Add(openFolderItem);
             _profileContextMenu.Items.Add(deleteProfileItem);
 
+            _profileContextMenu.Items.Add(new ToolStripSeparator());
+            _profileContextMenu.Items.Add("Choose game save folder...", null, (s, e) => ChooseSaveFolder());
             this.cmbProfiles.ContextMenuStrip = _profileContextMenu;
 
             // Mod ListView Context Menu
@@ -242,7 +286,18 @@ namespace NH5ModManager
 
             try
             {
+                // Move the profile folder first so its Save/ folder travels with the mods.
                 if (Directory.Exists(sourceDir)) Directory.Move(sourceDir, targetDir);
+                try
+                {
+                    SaveProfiles.RenameProfile(selectedProfile, cleanName);
+                }
+                catch
+                {
+                    if (Directory.Exists(targetDir) && !Directory.Exists(sourceDir))
+                        Directory.Move(targetDir, sourceDir);
+                    throw;
+                }
                 if (File.Exists(sourceJson)) File.Move(sourceJson, targetJson);
 
                 LoadProfiles();
@@ -279,7 +334,7 @@ namespace NH5ModManager
 
             try
             {
-                if (Directory.Exists(sourceDir)) CopyDirectory(sourceDir, targetDir);
+                if (Directory.Exists(sourceDir)) CopyDirectory(sourceDir, targetDir, excludeProfileSave: true);
                 if (File.Exists(sourceJson)) File.Copy(sourceJson, targetJson, overwrite: true);
 
                 LoadProfiles();
@@ -304,13 +359,19 @@ namespace NH5ModManager
             }
 
             string sourceDir = Path.Combine(ConfigsDirectory, selectedProfile);
-            if (!Directory.Exists(sourceDir))
+            try
             {
-                MessageBox.Show($"Profile folder '{selectedProfile}' was not found.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                // "Default" is always listed, even before it contains any mods.
+                // Materialize its normal profile structure so an empty profile can
+                // still be exported and imported as a valid package.
+                Directory.CreateDirectory(Path.Combine(sourceDir, "NASCARHeat5_Data"));
+                SaveActiveModsForProfile(selectedProfile);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to prepare profile '{selectedProfile}' for export:\n{ex.Message}", "Export Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
-
-            SaveActiveModsForProfile(selectedProfile);
 
             using SaveFileDialog sfd = new SaveFileDialog
             {
@@ -329,7 +390,7 @@ namespace NH5ModManager
                     Directory.CreateDirectory(tempFolder);
 
                     string targetProfileDir = Path.Combine(tempFolder, selectedProfile);
-                    CopyDirectory(sourceDir, targetProfileDir);
+                    CopyDirectory(sourceDir, targetProfileDir, excludeProfileSave: true);
 
                     string jsonPath = GetProfileJsonPath(selectedProfile);
                     if (File.Exists(jsonPath))
@@ -395,7 +456,7 @@ namespace NH5ModManager
                         Directory.Delete(targetDir, true);
                     }
 
-                    CopyDirectory(sourceProfileFolder, targetDir);
+                    CopyDirectory(sourceProfileFolder, targetDir, excludeProfileSave: true);
 
                     string[] jsonFiles = Directory.GetFiles(tempExtractDir, "*.json");
                     foreach (string jsonFile in jsonFiles)
@@ -552,10 +613,9 @@ namespace NH5ModManager
                 foreach (string dir in Directory.GetDirectories(ConfigsDirectory))
                 {
                     string folderName = Path.GetFileName(dir);
-                    if (!folderName.Equals("Default", StringComparison.OrdinalIgnoreCase))
-                    {
-                        cmbProfiles.Items.Add(folderName);
-                    }
+                    if (folderName.Equals("Default", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (folderName.StartsWith(".", StringComparison.Ordinal)) continue;
+                    cmbProfiles.Items.Add(folderName);
                 }
             }
 
@@ -843,29 +903,34 @@ namespace NH5ModManager
 
             bool deploymentSuccess = false;
 
-            await Task.Run(() =>
+            try
             {
-                this.Invoke(new Action(() => lblStatus.Text = $"Deploying mods for '{selectedProfile}'..."));
-                deploymentSuccess = SwapDataFolderForProfile(selectedProfile, checkedAssetPaths);
-
-                if (deploymentSuccess)
+                await Task.Run(() =>
                 {
-                    if (unlockDlcRequested)
+                    EnsureGameClosed();
+                    if (Directory.Exists(Path.Combine(_saveDirectory, "NASCARHeat5_Data")))
+                        throw new IOException("The save folder points to a game installation. Choose the save folder from the profile menu.");
+                    SaveProfiles.Deploy(selectedProfile, () =>
                     {
-                        this.Invoke(new Action(() => lblStatus.Text = "Deploying Ozzycon DLC Fix assets to DLC folder..."));
-                        DeployDlcFixFiles();
-                    }
-
-                    if (unlockDlcRequested || customServerRequested)
-                    {
-                        this.Invoke(new Action(() => lblStatus.Text = "Mods verified. Applying Assembly Patches (DLC/Server)..."));
-                        ApplyAssemblyPatches(unlockDlcRequested, customServerRequested);
-                    }
-                }
-            });
-
-            this.Enabled = true;
-            this.UseWaitCursor = false;
+                        this.Invoke(new Action(() => lblStatus.Text = $"Deploying mods and save for '{selectedProfile}'..."));
+                        if (!SwapDataFolderForProfile(selectedProfile, checkedAssetPaths))
+                            throw new IOException("Profile assets could not be deployed.");
+                        if (unlockDlcRequested) DeployDlcFixFiles();
+                        if (unlockDlcRequested || customServerRequested)
+                            ApplyAssemblyPatches(unlockDlcRequested, customServerRequested);
+                    });
+                    deploymentSuccess = true;
+                });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Deployment stopped: {ex.Message}", "Deployment Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                this.Enabled = true;
+                this.UseWaitCursor = false;
+            }
 
             if (!deploymentSuccess)
             {
@@ -1013,7 +1078,7 @@ namespace NH5ModManager
             catch (Exception ex)
             {
                 if (File.Exists(tempOutputPath)) File.Delete(tempOutputPath);
-                this.Invoke(() => MessageBox.Show($"An error occurred while patching Assembly-CSharp.dll:\n{ex.Message}", "Patch Error", MessageBoxButtons.OK, MessageBoxIcon.Error));
+                throw new IOException("Failed to patch Assembly-CSharp.dll: " + ex.Message, ex);
             }
         }
 
@@ -1162,13 +1227,23 @@ namespace NH5ModManager
             }));
         }
 
-        private static void CopyDirectory(string sourceDir, string destinationDir)
+        private static bool IsInsideProfileSaveFolder(string relativePath)
+        {
+            string saveName = SaveProfileManager.ProfileSaveFolderName;
+            if (relativePath.Equals(saveName, StringComparison.OrdinalIgnoreCase)) return true;
+            return relativePath.StartsWith(saveName + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                || relativePath.StartsWith(saveName + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void CopyDirectory(string sourceDir, string destinationDir, bool excludeProfileSave = false)
         {
             Directory.CreateDirectory(destinationDir);
 
             foreach (string file in Directory.GetFiles(sourceDir, "*.*", SearchOption.AllDirectories))
             {
                 string relativePath = Path.GetRelativePath(sourceDir, file);
+                if (excludeProfileSave && IsInsideProfileSaveFolder(relativePath)) continue;
+
                 string destFile = Path.Combine(destinationDir, relativePath);
                 string? destFolder = Path.GetDirectoryName(destFile);
 

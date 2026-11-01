@@ -1,0 +1,45 @@
+NASCAR Heat 5 Mod Manager - saves per profiel
+
+1. Start NH5ModManager.exe uit de map Release-SaveProfiles.
+2. Kies met Browse de Steam-installatiemap van NASCAR Heat 5.
+3. Maak voor elke mod met een andere coureurslijst een eigen profielnaam.
+4. Voeg de bijbehorende modbestanden aan dat profiel toe.
+5. Klik op Deploy Mods. Sluit de game altijd voordat je wisselt.
+
+Een nieuw modprofiel begint zonder bestaande save. NASCAR Heat 5 maakt deze
+zelf aan. Keer je terug naar een eerder profiel en klik je op Deploy Mods,
+dan wordt je voortgang van dat profiel teruggezet. Begin je met Default of
+Vanilla, dan blijft een al bestaande normale save bij dat profiel horen;
+de profielen schuiven dus niet meer een plaats op.
+
+Live savemap (waar de game schrijft):
+  C:\Users\<jouw Windows-gebruiker>\NASCAR Heat 5
+Andere locatie? Rechtsklik op de profielkeuzelijst en kies
+Choose game save folder... (kies NIET de Steam-installatiemap).
+
+Inactieve saves staan standaard IN het modprofiel:
+  Profiles\<profielnaam>\Save\
+De oorspronkelijke save wordt bewaard in:
+  Profiles\.SaveStore\Original\
+state.json staat in Profiles\.SaveStore en vermeldt ActiveProfile.
+Het is daarom normaal dat er bij 11 profielen 10x een Save-map onder
+Profiles staat plus 1 actieve save in de normale gamemap.
+Oude GUID-mappen / de eerdere map .NASCAR Heat 5.NH5ModManager worden
+automatisch veilig naar Profiles\<naam>\Save omgezet.
+Bewaar de hele Profiles-map als je een back-up maakt.
+
+Volledig schoon hertesten? Sluit game en manager en HERNOEM eerst zowel
+de normale map "NASCAR Heat 5" als de map "Profiles" (of minstens
+Profiles\.SaveStore) naar een back-upnaam. Alleen bestanden uit de
+normale savemap verwijderen is niet schoon: de oude koppelingen blijven
+dan in state.json bestaan.
+
+Alleen een ander profiel selecteren wisselt nog niets: gebruik Deploy Mods.
+Plaats je een nieuwe, onverenigbare mod in een bestaand profiel? Maak dan
+eerst een nieuw profiel, want dezelfde profielnaam behoudt dezelfde save.
+Kopiëren/exporteren van een profiel neemt de Save-map niet mee.
+
+Getest: 32 automatische controles, inclusief 11 verschillende profielen,
+saves in Profiles\<naam>\Save, migratie van oude GUID-saves en herstel
+bij fouten.
+Niet getest: daadwerkelijk spelen in NASCAR Heat 5 op deze computer.
