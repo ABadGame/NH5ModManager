@@ -22,6 +22,7 @@
             txtGamePath = new TextBox();
             btnRefresh = new Button();
             btnDeploy = new Button();
+            chkRememberPath = new CheckBox();
             lstMods = new ListView();
             columnHeader1 = new ColumnHeader();
             statusStrip1 = new StatusStrip();
@@ -33,6 +34,9 @@
             btnImportProfile = new Button();
             chkUnlockDLC = new CheckBox();
             chkCustomServer = new CheckBox();
+            chkUnlockSetups = new CheckBox();
+            chkFiveGear = new CheckBox();
+            grpOptions = new GroupBox();
             statusStrip1.SuspendLayout();
             SuspendLayout();
             // 
@@ -76,6 +80,19 @@
             btnDeploy.Text = "Deploy Mods";
             btnDeploy.UseVisualStyleBackColor = true;
             btnDeploy.Click += btnDeploy_Click;
+            // 
+            // chkRememberPath
+            // 
+            chkRememberPath.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            chkRememberPath.AutoSize = true;
+            chkRememberPath.Checked = true;
+            chkRememberPath.CheckState = CheckState.Checked;
+            chkRememberPath.Location = new Point(718, 44);
+            chkRememberPath.Name = "chkRememberPath";
+            chkRememberPath.TabIndex = 15;
+            chkRememberPath.Text = "Remember Game Location";
+            chkRememberPath.UseVisualStyleBackColor = true;
+            chkRememberPath.CheckedChanged += chkRememberPath_CheckedChanged;
             // 
             // lstMods
             // 
@@ -161,9 +178,9 @@
             // 
             // chkUnlockDLC
             // 
-            chkUnlockDLC.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            chkUnlockDLC.Anchor = AnchorStyles.Top | AnchorStyles.Left;
             chkUnlockDLC.AutoSize = true;
-            chkUnlockDLC.Location = new Point(664, 44);
+            chkUnlockDLC.Location = new Point(10, 43);
             chkUnlockDLC.Name = "chkUnlockDLC";
             chkUnlockDLC.Size = new Size(124, 19);
             chkUnlockDLC.TabIndex = 9;
@@ -172,25 +189,60 @@
             // 
             // chkCustomServer
             // 
-            chkCustomServer.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            chkCustomServer.Anchor = AnchorStyles.Top | AnchorStyles.Left;
             chkCustomServer.AutoSize = true;
-            chkCustomServer.Location = new Point(531, 44);
+            chkCustomServer.Location = new Point(10, 22);
             chkCustomServer.Name = "chkCustomServer";
             chkCustomServer.Size = new Size(124, 19);
             chkCustomServer.TabIndex = 10;
             chkCustomServer.Text = "Enable Multiplayer";
             chkCustomServer.UseVisualStyleBackColor = true;
             // 
+            // chkUnlockSetups
+            // 
+            chkUnlockSetups.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            chkUnlockSetups.AutoSize = true;
+            chkUnlockSetups.Location = new Point(10, 64);
+            chkUnlockSetups.Name = "chkUnlockSetups";
+            chkUnlockSetups.Size = new Size(192, 19);
+            chkUnlockSetups.TabIndex = 11;
+            chkUnlockSetups.Text = "Unlock Custom Setups";
+            chkUnlockSetups.UseVisualStyleBackColor = true;
+            // 
+            // chkFiveGear
+            // 
+            chkFiveGear.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            chkFiveGear.AutoSize = true;
+            chkFiveGear.Location = new Point(10, 85);
+            chkFiveGear.Name = "chkFiveGear";
+            chkFiveGear.Size = new Size(168, 19);
+            chkFiveGear.TabIndex = 13;
+            chkFiveGear.Text = "Add 5th Gear (Cup)";
+            chkFiveGear.UseVisualStyleBackColor = true;
+            // 
+            // grpOptions
+            // 
+            grpOptions.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            grpOptions.Controls.Add(chkCustomServer);
+            grpOptions.Controls.Add(chkUnlockDLC);
+            grpOptions.Controls.Add(chkUnlockSetups);
+            grpOptions.Controls.Add(chkFiveGear);
+            grpOptions.Location = new Point(900, 8);
+            grpOptions.Name = "grpOptions";
+            grpOptions.Size = new Size(194, 112);
+            grpOptions.TabIndex = 14;
+            grpOptions.Text = "Game Options";
+            // 
             // Form1
             // 
             AllowDrop = true;
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
-            ClientSize = new Size(800, 560);
+            ClientSize = new Size(1108, 560);
             Controls.Add(btnImportProfile);
             Controls.Add(btnExportProfile);
-            Controls.Add(chkCustomServer);
-            Controls.Add(chkUnlockDLC);
+            Controls.Add(grpOptions);
+            Controls.Add(chkRememberPath);
             Controls.Add(btnSaveProfile);
             Controls.Add(cmbProfiles);
             Controls.Add(lblProfile);
@@ -217,6 +269,7 @@
         private TextBox txtGamePath;
         private Button btnRefresh;
         private Button btnDeploy;
+        private CheckBox chkRememberPath;
         private ListView lstMods;
         private ColumnHeader columnHeader1;
         private StatusStrip statusStrip1;
@@ -227,6 +280,9 @@
         private Button btnExportProfile;
         private Button btnImportProfile;
         private CheckBox chkUnlockDLC;
+        private CheckBox chkUnlockSetups;
+        private CheckBox chkFiveGear;
+        private GroupBox grpOptions;
         private CheckBox chkCustomServer;
     }
 }

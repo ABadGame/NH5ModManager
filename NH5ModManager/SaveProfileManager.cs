@@ -135,6 +135,51 @@ public sealed class SaveProfileManager
         return Directory.Exists(path) && Directory.EnumerateFileSystemEntries(path).Any();
     }
 
+    // Merges every file and subfolder from source into target. When the same
+    // relative path exists on both sides the newer write time wins; the losing
+    // file is deleted, so the source is emptied of everything merged and its
+    // wrapper folder can be tidied away afterwards. Used when a legacy save
+    // slot has to be folded into the plain profile slot that already holds a
+    // parked save.
+    private static void MergeDirectoryTree(string source, string target)
+    {
+        Directory.CreateDirectory(target);
+        foreach (string file in Directory.EnumerateFiles(source, "*", SearchOption.TopDirectoryOnly))
+        {
+            string targetFile = Path.Combine(target, Path.GetFileName(file));
+            if (Directory.Exists(targetFile))
+                throw new IOException(
+                    $"Cannot merge save folders: '{targetFile}' is a folder on one side and a file on the other. Save files have not been changed.");
+            if (File.Exists(targetFile))
+            {
+                // Newer wins; the outdated copy (source or target) is removed.
+                if (File.GetLastWriteTimeUtc(file) > File.GetLastWriteTimeUtc(targetFile))
+                    File.Copy(file, targetFile, overwrite: true);
+                File.Delete(file);
+            }
+            else
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(targetFile)!);
+                File.Move(file, targetFile);
+            }
+        }
+        foreach (string dir in Directory.EnumerateDirectories(source, "*", SearchOption.TopDirectoryOnly))
+        {
+            string targetDir = Path.Combine(target, Path.GetFileName(dir));
+            if (File.Exists(targetDir))
+                throw new IOException(
+                    $"Cannot merge save folders: '{targetDir}' is a folder on one side and a file on the other. Save files have not been changed.");
+            MergeDirectoryTree(dir, targetDir);
+        }
+        // The source is now empty of everything that merged; delete stray
+        // leftovers (empty directories) so the wrapper can be removed.
+        foreach (string entry in Directory.EnumerateFileSystemEntries(source, "*", SearchOption.TopDirectoryOnly))
+        {
+            if (File.Exists(entry)) File.Delete(entry);
+            else Directory.Delete(entry, recursive: true);
+        }
+    }
+
     private static void RejectLinks(string path)
     {
         if (!Directory.Exists(path)) return;
@@ -190,7 +235,7 @@ public sealed class SaveProfileManager
         return slotId;
     }
 
-    private string NewReadableSlotId(string profile, SaveState state, string? ignoreId = null)
+    private string NewReadableSlotId(string profile, SaveState state, string? ignoreId = null, string? anticipatedPath = null)
     {
         string baseName = CleanProfileName(profile);
         string candidate = baseName;
@@ -200,13 +245,18 @@ public sealed class SaveProfileManager
             StringComparer.OrdinalIgnoreCase);
 
         while (used.Contains(candidate)
-               || candidate.Equals("Original", StringComparison.OrdinalIgnoreCase)
-               || (!candidate.Equals(ignoreId, StringComparison.OrdinalIgnoreCase)
-                   && (Directory.Exists(Slot(candidate)) || File.Exists(Slot(candidate)))))
+               || candidate.Equals("Original", StringComparison.OrdinalIgnoreCase))
         {
             candidate = $"{baseName} ({suffix++})";
             ValidateSlotId(candidate);
         }
+
+        // The plain name is always preferred. An existing Profiles/<name>/Save
+        // is NOT a collision: that is this profile's own parked save (or files
+        // imported next to its folder). Slot paths are guarded from real
+        // conflicts by the 'used' set, because Load() rejects two profiles
+        // pointing at the same save folder. Bumping to "Name (2)" here used to
+        // create duplicate sibling folders alongside every profile folder.
         return candidate;
     }
 
@@ -219,7 +269,63 @@ public sealed class SaveProfileManager
     private void MoveToSlot(string source, string slotPath)
     {
         EnsureSlotParent(slotPath);
-        Directory.Move(source, slotPath);
+        MoveDirectoryTree(source, slotPath);
+    }
+
+    // After a slot relocation the old wrapper folder (e.g. "Name (2)") is empty.
+    // Delete it when it holds nothing anymore so the Profiles area stays clean.
+    // Never touches the store root, the Profiles root, or a live profile folder.
+    private void TryDeleteEmptiedSlotParent(string slotPath)
+    {
+        string? parent = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(slotPath)));
+        if (string.IsNullOrEmpty(parent)) return;
+        string full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(parent));
+        if (full.Equals(store, StringComparison.OrdinalIgnoreCase)) return;
+        if (full.Equals(profilesRoot, StringComparison.OrdinalIgnoreCase)) return;
+        if (Path.GetFileName(full).StartsWith(".", StringComparison.Ordinal)) return;
+        try
+        {
+            if (Directory.Exists(full) && !Directory.EnumerateFileSystemEntries(full).Any())
+                Directory.Delete(full, recursive: false);
+        }
+        catch
+        {
+            // Cosmetic cleanup only; never fail a migration over it.
+        }
+    }
+
+    // Directory renames only work on one volume. The game save lives under the
+    // user profile (usually C:) while Profiles — and every parked save slot —
+    // live wherever the manager itself is installed (e.g. D:). Switching
+    // therefore has to fall back to copy + delete when the sides differ.
+    private static void MoveDirectoryTree(string source, string target)
+    {
+        string? sourceRoot = Path.GetPathRoot(Path.GetFullPath(source));
+        string? targetRoot = Path.GetPathRoot(Path.GetFullPath(target));
+        bool sameVolume = !string.IsNullOrEmpty(sourceRoot)
+            && sourceRoot.Equals(targetRoot, StringComparison.OrdinalIgnoreCase);
+        if (sameVolume)
+        {
+            Directory.Move(source, target);
+            return;
+        }
+
+        if (Directory.Exists(target) || File.Exists(target))
+            throw new IOException("The move destination already exists. Nothing was overwritten: " + target);
+
+        string? parent = Path.GetDirectoryName(target);
+        if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
+        try
+        {
+            CopyDirectory(source, target);
+            Directory.Delete(source, recursive: true);
+        }
+        catch
+        {
+            // Never leave a half-copied destination behind; the source is untouched.
+            try { Directory.Delete(target, recursive: true); } catch { }
+            throw;
+        }
     }
 
     private void MigrateLegacyExternalStore()
@@ -297,7 +403,7 @@ public sealed class SaveProfileManager
         try
         {
             string migrated = legacyStore + ".migrated";
-            if (!Directory.Exists(migrated)) Directory.Move(legacyStore, migrated);
+            if (!Directory.Exists(migrated)) MoveDirectoryTree(legacyStore, migrated);
         }
         catch
         {
@@ -316,7 +422,7 @@ public sealed class SaveProfileManager
             throw new IOException($"The active profile '{state.ActiveProfile}' exists both live and in its backup folder. Nothing was overwritten.");
 
         if (Directory.Exists(live)) Directory.Delete(live, recursive: false);
-        Directory.Move(archivedActive, live);
+        MoveDirectoryTree(archivedActive, live);
     }
 
     private void MigrateReadableSlots(SaveState state)
@@ -325,8 +431,11 @@ public sealed class SaveProfileManager
         {
             string profile = pair.Key;
             string oldId = pair.Value;
+            // "(n)" suffixed slots were only needed when the save could not live
+            // next to the profile's own folder; they are legacy layout now too.
             bool isLegacyName = Guid.TryParseExact(oldId, "N", out _)
-                || oldId.StartsWith("Save - ", StringComparison.OrdinalIgnoreCase);
+                || oldId.StartsWith("Save - ", StringComparison.OrdinalIgnoreCase)
+                || !oldId.Equals(CleanProfileName(profile), StringComparison.OrdinalIgnoreCase);
             if (!isLegacyName) continue;
 
             string newId = NewReadableSlotId(profile, state, oldId);
@@ -354,10 +463,25 @@ public sealed class SaveProfileManager
                 if (Directory.Exists(oldPath)
                     && !oldPath.Equals(newPath, StringComparison.OrdinalIgnoreCase))
                 {
-                    if (Directory.Exists(newPath) || File.Exists(newPath))
+                    if (File.Exists(newPath))
                         throw new IOException($"Cannot migrate '{profile}' because '{newId}' already exists.");
-                    MoveToSlot(oldPath, newPath);
-                    moved = true;
+                    if (Directory.Exists(newPath))
+                    {
+                        // The plain slot path already holds this profile's own
+                        // parked save. Merge the legacy slot's save into it
+                        // (newer file wins) and retire the legacy wrapper, so
+                        // no sibling "(n)" folder survives the migration.
+                        MergeDirectoryTree(oldPath, newPath);
+                        moved = true;
+                    }
+                    else
+                    {
+                        MoveToSlot(oldPath, newPath);
+                        moved = true;
+                        // The old "Name (2)" wrapper folder is empty now;
+                        // tidy it up so it stops showing in the Profiles area.
+                    }
+                    TryDeleteEmptiedSlotParent(oldPath);
                 }
 
                 state.Profiles[profile] = newId;
@@ -370,7 +494,7 @@ public sealed class SaveProfileManager
                 state.Profiles[profile] = oldId;
                 state.ActiveSlot = oldActive;
                 if (moved && Directory.Exists(newPath) && !Directory.Exists(oldPath))
-                    Directory.Move(newPath, oldPath);
+                    MoveDirectoryTree(newPath, oldPath);
                 throw;
             }
         }
@@ -392,7 +516,7 @@ public sealed class SaveProfileManager
                 if (HasSaveData(live)) MoveToSlot(live, target);
                 else Directory.Delete(live, recursive: false);
             }
-            Directory.Move(previous, live);
+            MoveDirectoryTree(previous, live);
         }
         else if (!pending.HadOutgoingSave)
         {
@@ -520,7 +644,7 @@ public sealed class SaveProfileManager
             if (hadOutgoingSave) MoveToSlot(live, previous);
             else Directory.Delete(live, recursive: false);
 
-            if (Directory.Exists(target)) Directory.Move(target, live);
+            if (Directory.Exists(target)) MoveDirectoryTree(target, live);
             else Directory.CreateDirectory(live); // The game creates its own new save.
 
             deployAssets();
@@ -568,7 +692,11 @@ public sealed class SaveProfileManager
         if (state.Profiles.ContainsKey(newName))
             throw new IOException("That name already has saved progress. Choose a different profile name.");
 
-        string newId = NewReadableSlotId(newName, state, oldId);
+        // If the UI already renamed Profiles/old -> Profiles/new, the save
+        // folder moved with it and now lives at the new path; prefer that
+        // layout over the legacy slot path so renames stay conflict-free.
+        string renamedWithProfile = Path.Combine(profilesRoot, newName, ProfileSaveFolderName);
+        string newId = NewReadableSlotId(newName, state, oldId, renamedWithProfile);
         string oldPath = Slot(oldId);
         string newPath = Slot(newId);
         bool moved = false;
@@ -577,26 +705,32 @@ public sealed class SaveProfileManager
 
         try
         {
-            // If the UI already renamed Profiles/old -> Profiles/new, the save
-            // folder moved with it and now lives at the new path under oldId's
-            // parent name mismatch — detect both layouts.
-            string renamedWithProfile = Path.Combine(profilesRoot, newName, ProfileSaveFolderName);
             if (!oldId.Equals(newId, StringComparison.OrdinalIgnoreCase))
             {
-                if (Directory.Exists(oldPath))
+                if (Directory.Exists(renamedWithProfile)
+                    && !renamedWithProfile.Equals(newPath, StringComparison.OrdinalIgnoreCase)
+                    && !Directory.Exists(newPath) && !File.Exists(newPath))
                 {
-                    if (Directory.Exists(newPath) || File.Exists(newPath))
-                        throw new IOException("The renamed save folder already exists. Nothing was overwritten.");
-                    MoveToSlot(oldPath, newPath);
-                    moved = true;
-                }
-                else if (Directory.Exists(renamedWithProfile)
-                         && !renamedWithProfile.Equals(newPath, StringComparison.OrdinalIgnoreCase))
-                {
-                    if (Directory.Exists(newPath) || File.Exists(newPath))
-                        throw new IOException("The renamed save folder already exists. Nothing was overwritten.");
                     MoveToSlot(renamedWithProfile, newPath);
                     moved = true;
+                }
+                else if (Directory.Exists(oldPath))
+                {
+                    if (File.Exists(newPath))
+                        throw new IOException("The renamed save folder already exists. Nothing was overwritten.");
+                    if (Directory.Exists(newPath))
+                    {
+                        // The target profile folder already parks this
+                        // profile's own save; merge instead of failing.
+                        MergeDirectoryTree(oldPath, newPath);
+                        moved = true;
+                    }
+                    else
+                    {
+                        MoveToSlot(oldPath, newPath);
+                        moved = true;
+                    }
+                    TryDeleteEmptiedSlotParent(oldPath);
                 }
             }
 
@@ -618,7 +752,7 @@ public sealed class SaveProfileManager
             state.ActiveSlot = oldActive;
             state.ActiveProfile = oldActiveProfile;
             if (moved && Directory.Exists(newPath) && !Directory.Exists(oldPath))
-                Directory.Move(newPath, oldPath);
+                MoveDirectoryTree(newPath, oldPath);
             throw;
         }
     }
